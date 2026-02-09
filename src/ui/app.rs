@@ -580,38 +580,37 @@ impl App {
     /// Copy text to system clipboard.
     /// Uses pbcopy on macOS, xclip or xsel on Linux.
     fn copy_to_clipboard(text: &str) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        {
-            let mut child = Command::new("pbcopy")
+        /// Pipe `text` into the given command and verify it exits successfully.
+        fn run_clipboard_cmd(cmd: &str, args: &[&str], text: &str) -> Result<()> {
+            let mut child = Command::new(cmd)
+                .args(args)
                 .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()?;
             if let Some(stdin) = child.stdin.as_mut() {
                 use std::io::Write;
                 stdin.write_all(text.as_bytes())?;
             }
-            child.wait()?;
-            return Ok(());
+            let output = child.wait_with_output()?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("{} failed: {}", cmd, stderr.trim());
+            }
+            Ok(())
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            return run_clipboard_cmd("pbcopy", &[], text);
         }
         #[cfg(target_os = "linux")]
         {
-            // Try xclip first, fall back to xsel
-            let result = Command::new("xclip")
-                .args(["-selection", "clipboard"])
-                .stdin(std::process::Stdio::piped())
-                .spawn();
-            let mut child = match result {
-                Ok(c) => c,
-                Err(_) => Command::new("xsel")
-                    .args(["--clipboard", "--input"])
-                    .stdin(std::process::Stdio::piped())
-                    .spawn()?,
-            };
-            if let Some(stdin) = child.stdin.as_mut() {
-                use std::io::Write;
-                stdin.write_all(text.as_bytes())?;
+            // Try xclip first, fall back to xsel on spawn failure or non-zero exit
+            let xclip_result = run_clipboard_cmd("xclip", &["-selection", "clipboard"], text);
+            if xclip_result.is_ok() {
+                return xclip_result;
             }
-            child.wait()?;
-            return Ok(());
+            return run_clipboard_cmd("xsel", &["--clipboard", "--input"], text);
         }
         #[allow(unreachable_code)]
         Err(anyhow::anyhow!("Clipboard not supported on this platform"))
