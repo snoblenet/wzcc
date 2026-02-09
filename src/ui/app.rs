@@ -91,6 +91,10 @@ pub struct App {
     history_scroll_offset: usize,
     /// Pre-parsed timestamps for history turns (avoids per-frame parsing)
     history_timestamps: Vec<Option<SystemTime>>,
+    /// Cached rendered lines for history detail view: ((text_hash, width), lines)
+    cached_history_lines: Option<((u64, usize), Vec<ratatui::text::Line<'static>>)>,
+    /// Cached rendered lines for details preview: ((text_hash, width, max_lines), lines)
+    cached_preview_lines: Option<((u64, usize, usize), Vec<ratatui::text::Line<'static>>)>,
     /// User configuration loaded from ~/.config/wzcc/config.toml
     config: Config,
     /// Git branch cache (30s TTL)
@@ -147,6 +151,8 @@ impl App {
             history_index: 0,
             history_scroll_offset: 0,
             history_timestamps: Vec::new(),
+            cached_history_lines: None,
+            cached_preview_lines: None,
             config,
             git_branch_cache: GitBranchCache::new(30),
             last_transcript_refresh: Instant::now(),
@@ -1172,6 +1178,8 @@ impl App {
             &mut self.history_scroll_offset,
             &mut self.history_list_state,
             &self.history_timestamps,
+            &mut self.cached_history_lines,
+            &mut self.cached_preview_lines,
         );
 
         // Render footer with keybindings help

@@ -5,12 +5,26 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
+use std::hash::{Hash, Hasher};
 use std::time::SystemTime;
 use unicode_width::UnicodeWidthChar;
 
 use crate::transcript::ConversationTurn;
 
+use super::markdown;
 use super::session::{status_display, wrap_text_lines, ClaudeSession};
+
+/// Cache entry for history detail view: ((text_hash, width), rendered_lines).
+type HistoryLinesCache = Option<((u64, usize), Vec<Line<'static>>)>;
+/// Cache entry for details preview: ((text_hash, width, max_lines), rendered_lines).
+type PreviewLinesCache = Option<((u64, usize, usize), Vec<Line<'static>>)>;
+
+/// Compute a fast hash of a string for cache key comparison.
+fn hash_str(s: &str) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Sub-mode for history browsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +282,8 @@ pub fn render_details(
     history_scroll_offset: &mut usize,
     history_list_state: &mut ListState,
     history_timestamps: &[Option<SystemTime>],
+    cached_history_lines: &mut HistoryLinesCache,
+    cached_preview_lines: &mut PreviewLinesCache,
 ) {
     // History browsing mode dispatch
     if matches!(
@@ -304,6 +320,7 @@ pub fn render_details(
                     history_turns,
                     history_index,
                     history_scroll_offset,
+                    cached_history_lines,
                 );
             }
             _ => unreachable!(),
@@ -432,8 +449,30 @@ pub fn render_details(
 
                     // Separator + prompt + output label uses ~8 lines
                     let preview_lines = available_for_preview.saturating_sub(8);
+                    let text_hash = hash_str(output);
+                    let cache_key = (text_hash, inner_width, preview_lines);
                     let output_lines =
-                        wrap_text_lines(output, inner_width, preview_lines, Color::Gray);
+                        if let Some((cached_key, cached)) = cached_preview_lines.as_ref() {
+                            if *cached_key == cache_key {
+                                cached.clone()
+                            } else {
+                                let rendered = markdown::markdown_to_lines_truncated(
+                                    output,
+                                    inner_width,
+                                    preview_lines,
+                                );
+                                *cached_preview_lines = Some((cache_key, rendered.clone()));
+                                rendered
+                            }
+                        } else {
+                            let rendered = markdown::markdown_to_lines_truncated(
+                                output,
+                                inner_width,
+                                preview_lines,
+                            );
+                            *cached_preview_lines = Some((cache_key, rendered.clone()));
+                            rendered
+                        };
                     lines.extend(output_lines);
                 }
             }
@@ -700,6 +739,7 @@ fn render_history_details(
     turns: &[ConversationTurn],
     index: usize,
     scroll_offset: &mut usize,
+    cached_history_lines: &mut HistoryLinesCache,
 ) {
     let turn = &turns[index];
     let total = turns.len();
@@ -743,17 +783,28 @@ fn render_history_details(
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let response_lines = wrap_text_lines(
-            &turn.assistant_response,
-            inner_width,
-            max_lines,
-            Color::Gray,
-        );
+        // Use cached markdown lines if the content hasn't changed.
+        // Cache key includes width so a resize regenerates lines.
+        let text_hash = hash_str(&turn.assistant_response);
+        let cache_key = (text_hash, inner_width);
+        let response_lines = if let Some((cached_key, cached)) = cached_history_lines.as_ref() {
+            if *cached_key == cache_key {
+                cached.clone()
+            } else {
+                let rendered = markdown::markdown_to_lines(&turn.assistant_response, inner_width);
+                *cached_history_lines = Some((cache_key, rendered.clone()));
+                rendered
+            }
+        } else {
+            let rendered = markdown::markdown_to_lines(&turn.assistant_response, inner_width);
+            *cached_history_lines = Some((cache_key, rendered.clone()));
+            rendered
+        };
         lines.extend(response_lines);
     }
 
-    // Clamp scroll offset to prevent overscroll beyond content
-    // Write back to caller so the App state stays in bounds
+    // Clamp scroll offset to prevent overscroll beyond content.
+    // Lines are pre-wrapped so lines.len() == actual visual row count.
     let content_height = lines.len();
     let viewport_height = area.height.saturating_sub(2) as usize; // minus borders
     let max_scroll = content_height.saturating_sub(viewport_height);
@@ -768,7 +819,6 @@ fn render_history_details(
                 .title(title)
                 .border_style(Style::default().fg(Color::Yellow)),
         )
-        .wrap(Wrap { trim: false })
         .scroll((clamped_offset, 0));
 
     f.render_widget(paragraph, area);

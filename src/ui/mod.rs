@@ -1,6 +1,7 @@
 pub mod app;
 pub mod event;
 pub mod input_buffer;
+pub mod markdown;
 pub mod render;
 pub mod session;
 pub mod toast;
