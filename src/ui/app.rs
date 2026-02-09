@@ -23,6 +23,7 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
+use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::event::{
@@ -576,6 +577,85 @@ impl App {
         self.dirty = true;
     }
 
+    /// Copy text to system clipboard.
+    /// Uses pbcopy on macOS, xclip or xsel on Linux.
+    fn copy_to_clipboard(text: &str) -> Result<()> {
+        /// Pipe `text` into the given command and verify it exits successfully.
+        fn run_clipboard_cmd(cmd: &str, args: &[&str], text: &str) -> Result<()> {
+            let mut child = Command::new(cmd)
+                .args(args)
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                stdin.write_all(text.as_bytes())?;
+            }
+            let output = child.wait_with_output()?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("{} failed: {}", cmd, stderr.trim());
+            }
+            Ok(())
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            return run_clipboard_cmd("pbcopy", &[], text);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Try xclip first, fall back to xsel on spawn failure or non-zero exit
+            let xclip_result = run_clipboard_cmd("xclip", &["-selection", "clipboard"], text);
+            if xclip_result.is_ok() {
+                return xclip_result;
+            }
+            return run_clipboard_cmd("xsel", &["--clipboard", "--input"], text);
+        }
+        #[allow(unreachable_code)]
+        Err(anyhow::anyhow!("Clipboard not supported on this platform"))
+    }
+
+    /// Yank (copy) the selected session's last output to clipboard.
+    fn yank_selected_output(&mut self) {
+        if let Some(i) = self.list_state.selected() {
+            if let Some(session) = self.sessions.get(i) {
+                if let Some(output) = &session.last_output {
+                    match Self::copy_to_clipboard(output) {
+                        Ok(()) => {
+                            self.toast = Some(Toast::success("Copied output".to_string()));
+                        }
+                        Err(e) => {
+                            self.toast = Some(Toast::error(format!("Copy failed: {}", e)));
+                        }
+                    }
+                } else {
+                    self.toast = Some(Toast::error("No output to copy".to_string()));
+                }
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// Yank (copy) a history turn's assistant response to clipboard.
+    fn yank_history_output(&mut self, index: usize) {
+        if let Some(turn) = self.history_turns.get(index) {
+            if turn.assistant_response.is_empty() {
+                self.toast = Some(Toast::error("No response to copy".to_string()));
+            } else {
+                match Self::copy_to_clipboard(&turn.assistant_response) {
+                    Ok(()) => {
+                        self.toast = Some(Toast::success("Copied response".to_string()));
+                    }
+                    Err(e) => {
+                        self.toast = Some(Toast::error(format!("Copy failed: {}", e)));
+                    }
+                }
+            }
+            self.dirty = true;
+        }
+    }
+
     /// Enter history list view for the selected session
     fn enter_history_mode(&mut self) {
         if let Some(i) = self.list_state.selected() {
@@ -868,6 +948,13 @@ impl App {
                                 self.dirty = true;
                             }
                         }
+                        KeyCode::Char('y') => {
+                            // y -> yank selected history turn's response to clipboard
+                            self.pending_g = false;
+                            if let Some(i) = self.history_list_state.selected() {
+                                self.yank_history_output(i);
+                            }
+                        }
                         _ => {
                             self.pending_g = false;
                         }
@@ -928,6 +1015,11 @@ impl App {
                             self.history_scroll_offset = usize::MAX;
                             self.dirty = true;
                         }
+                        KeyCode::Char('y') => {
+                            // y -> yank current turn's response to clipboard
+                            self.pending_g = false;
+                            self.yank_history_output(self.history_index);
+                        }
                         _ => {
                             self.pending_g = false;
                         }
@@ -981,6 +1073,9 @@ impl App {
                     } else if key.code == KeyCode::Char('x') {
                         // Request kill for selected session (shows confirmation)
                         self.request_kill_selected();
+                    } else if key.code == KeyCode::Char('y') {
+                        // Yank selected session's last output to clipboard
+                        self.yank_selected_output();
                     } else if key.code == KeyCode::Char('H') {
                         // Enter history browsing mode
                         self.enter_history_mode();
