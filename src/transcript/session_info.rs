@@ -66,21 +66,26 @@ pub fn detect_session_info(pane: &Pane) -> SessionInfo {
                 // This prevents showing wrong status from another session with same CWD
                 // Read transcript for actual status instead of showing Unknown
                 let transcript_path = mapping.transcript_path.clone();
-                let (status, updated_at) = if transcript_path.exists() {
+                let (status, last_prompt, last_output, updated_at) = if transcript_path.exists() {
                     let info = read_transcript_info(&transcript_path).unwrap_or(TranscriptInfo {
                         status: SessionStatus::Unknown,
                         last_prompt: None,
                         last_output: None,
                     });
-                    (info.status, get_file_mtime(&transcript_path))
+                    (
+                        info.status,
+                        info.last_prompt,
+                        info.last_output,
+                        get_file_mtime(&transcript_path),
+                    )
                 } else {
-                    (SessionStatus::Unknown, None)
+                    (SessionStatus::Unknown, None, None, None)
                 };
 
                 return SessionInfo {
                     status,
-                    last_prompt: None,
-                    last_output: None,
+                    last_prompt,
+                    last_output,
                     session_id: Some(mapping.session_id),
                     transcript_path: Some(transcript_path),
                     updated_at,
