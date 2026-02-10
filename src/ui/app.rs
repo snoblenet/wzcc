@@ -10,7 +10,8 @@ use crate::transcript::{ConversationTurn, TranscriptWatcher};
 use anyhow::Result;
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyCode, KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -746,7 +747,12 @@ impl App {
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -871,6 +877,11 @@ impl App {
                         }
                         _ => {}
                     }
+                }
+                Event::Paste(text) if self.input_mode => {
+                    // Normalize line endings and insert pasted text
+                    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                    self.dirty |= self.input_buffer.insert_str(&normalized);
                 }
                 Event::Key(key) if self.kill_confirm.is_some() => {
                     // Kill confirmation mode key handling
@@ -1154,6 +1165,9 @@ impl App {
                         }
                     }
                 }
+                Event::Paste(_) => {
+                    // Ignore paste events outside input mode
+                }
                 Event::Resize(_, _) => {
                     self.dirty = true;
                 }
@@ -1217,7 +1231,8 @@ impl App {
         execute!(
             terminal.backend_mut(),
             LeaveAlternateScreen,
-            DisableMouseCapture
+            DisableMouseCapture,
+            DisableBracketedPaste
         )?;
         terminal.show_cursor()?;
 

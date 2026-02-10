@@ -53,6 +53,17 @@ impl InputBuffer {
         true
     }
 
+    /// Insert a string at the current cursor position.
+    /// Returns true if the string is non-empty (insertion changes state).
+    pub fn insert_str(&mut self, s: &str) -> bool {
+        if s.is_empty() {
+            return false;
+        }
+        self.buffer.insert_str(self.cursor, s);
+        self.cursor += s.len();
+        true
+    }
+
     /// Delete the character before the cursor (backspace).
     /// Returns true if a character was deleted, false if cursor was already at start.
     pub fn backspace(&mut self) -> bool {
@@ -139,7 +150,8 @@ impl InputBuffer {
                 .map(|i| i + 1)
                 .unwrap_or(0);
             let prev_line_len = current_line_start - prev_line_start;
-            self.cursor = prev_line_start + col.min(prev_line_len);
+            let target = prev_line_start + col.min(prev_line_len);
+            self.cursor = self.snap_to_char_boundary(target);
             true
         } else {
             false
@@ -160,11 +172,22 @@ impl InputBuffer {
                 .map(|i| next_line_start + i)
                 .unwrap_or(self.buffer.len());
             let next_line_len = next_line_end - next_line_start;
-            self.cursor = next_line_start + col.min(next_line_len);
+            let target = next_line_start + col.min(next_line_len);
+            self.cursor = self.snap_to_char_boundary(target);
             true
         } else {
             false
         }
+    }
+
+    /// Snap a byte position to the nearest valid UTF-8 character boundary
+    /// at or before the given position.
+    fn snap_to_char_boundary(&self, pos: usize) -> usize {
+        let mut p = pos.min(self.buffer.len());
+        while p > 0 && !self.buffer.is_char_boundary(p) {
+            p -= 1;
+        }
+        p
     }
 }
 
@@ -531,5 +554,105 @@ mod tests {
         // prev_line_start = 0, prev_line_len = 6
         // result = 0 + min(3, 6) = 3
         assert_eq!(buf.cursor(), 3);
+    }
+
+    // --- cursor_up/down with mixed multibyte lines (char boundary safety) ---
+
+    #[test]
+    fn test_cursor_up_mixed_ascii_and_cjk_lines() {
+        let mut buf = InputBuffer::new();
+        // Line 1: "ab" (2 bytes), Line 2: "日本語" (9 bytes)
+        // Moving up from end of line 2 (col=9) should clamp to line 1 len (2)
+        buf.insert_str("ab\n日本語");
+        assert_eq!(buf.cursor(), 12); // 2 + 1 + 9
+        buf.cursor_up();
+        // Should be at byte 2 (end of "ab"), not panic
+        assert_eq!(buf.cursor(), 2);
+        assert!(buf.buffer.is_char_boundary(buf.cursor()));
+    }
+
+    #[test]
+    fn test_cursor_up_lands_mid_char_snaps_back() {
+        let mut buf = InputBuffer::new();
+        // Line 1: "日" (3 bytes), Line 2: "ab" (2 bytes)
+        // col from line 2 = 2 bytes, applied to line 1 = byte 2 (mid-char!)
+        // Should snap to byte 0 (before "日")
+        buf.insert_str("日\nab");
+        buf.cursor_up();
+        assert!(buf.buffer.is_char_boundary(buf.cursor()));
+        assert_eq!(buf.cursor(), 0);
+    }
+
+    #[test]
+    fn test_cursor_down_lands_mid_char_snaps_back() {
+        let mut buf = InputBuffer::new();
+        // Line 1: "ab" (2 bytes), Line 2: "日" (3 bytes)
+        // Move to end of line 1 (col=2), then down
+        // col=2 applied to line 2 = byte offset 2 within "日" (mid-char!)
+        // Should snap to byte 0 of line 2 (= overall byte 3)
+        buf.insert_str("ab\n日");
+        // cursor at end (byte 6). Move to end of line 1.
+        buf.cursor_up();
+        assert_eq!(buf.cursor(), 2); // end of "ab"
+        buf.cursor_down();
+        assert!(buf.buffer.is_char_boundary(buf.cursor()));
+        // byte 3 (start of "日") since col=2 snaps back from mid-char
+        assert_eq!(buf.cursor(), 3);
+    }
+
+    #[test]
+    fn test_cursor_up_pasted_mixed_content_no_panic() {
+        let mut buf = InputBuffer::new();
+        // Simulate pasting mixed Japanese/ASCII multi-line content
+        buf.insert_str("実装完了\ncommit & push\nテスト");
+        // cursor at end. Press up twice - should not panic.
+        assert!(buf.cursor_up());
+        assert!(buf.buffer.is_char_boundary(buf.cursor()));
+        assert!(buf.cursor_up());
+        assert!(buf.buffer.is_char_boundary(buf.cursor()));
+    }
+
+    // --- insert_str ---
+
+    #[test]
+    fn test_insert_str_empty() {
+        let mut buf = InputBuffer::new();
+        assert!(!buf.insert_str(""));
+        assert!(buf.is_empty());
+        assert_eq!(buf.cursor(), 0);
+    }
+
+    #[test]
+    fn test_insert_str_ascii() {
+        let mut buf = InputBuffer::new();
+        assert!(buf.insert_str("hello"));
+        assert_eq!(buf.as_str(), "hello");
+        assert_eq!(buf.cursor(), 5);
+    }
+
+    #[test]
+    fn test_insert_str_multiline() {
+        let mut buf = InputBuffer::new();
+        buf.insert_str("line1\nline2\nline3");
+        assert_eq!(buf.as_str(), "line1\nline2\nline3");
+        assert_eq!(buf.cursor(), 17);
+    }
+
+    #[test]
+    fn test_insert_str_at_middle() {
+        let mut buf = InputBuffer::new();
+        buf.insert_str("ac");
+        buf.cursor_left(); // cursor before 'c'
+        buf.insert_str("b");
+        assert_eq!(buf.as_str(), "abc");
+        assert_eq!(buf.cursor(), 2);
+    }
+
+    #[test]
+    fn test_insert_str_multibyte() {
+        let mut buf = InputBuffer::new();
+        buf.insert_str("日本語");
+        assert_eq!(buf.as_str(), "日本語");
+        assert_eq!(buf.cursor(), 9); // 3 chars * 3 bytes
     }
 }

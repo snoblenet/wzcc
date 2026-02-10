@@ -11,6 +11,8 @@ pub enum Event {
     Key(KeyEvent),
     /// Mouse input
     Mouse(MouseEvent),
+    /// Bracketed paste input
+    Paste(String),
     /// Tick (periodic update)
     Tick,
     /// Resize
@@ -37,6 +39,7 @@ impl EventHandler {
             match event::read()? {
                 CrosstermEvent::Key(key) => Ok(Event::Key(key)),
                 CrosstermEvent::Mouse(mouse) => Ok(Event::Mouse(mouse)),
+                CrosstermEvent::Paste(text) => Ok(Event::Paste(text)),
                 CrosstermEvent::Resize(w, h) => Ok(Event::Resize(w, h)),
                 _ => Ok(Event::Tick),
             }
