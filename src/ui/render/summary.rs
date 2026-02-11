@@ -261,56 +261,53 @@ pub(super) fn render_summary_details(
                 String::new()
             };
 
-            let mut lines = vec![Line::from(vec![
-                Span::styled("Pane: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(pane.pane_id.to_string()),
-                Span::styled(quick_num_display, Style::default().fg(Color::DarkGray)),
-            ])];
+            // -- Compact badge-style metadata header --
 
-            // Display workspace
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("Workspace: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(&pane.workspace, Style::default().fg(Color::Yellow)),
-            ]));
-
-            if let Some(cwd) = pane.cwd_path() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![Span::styled(
-                    "CWD:",
-                    Style::default().add_modifier(Modifier::BOLD),
-                )]));
-                lines.push(Line::from(cwd));
-            }
-
-            if let Some(tty) = &pane.tty_name {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled("TTY: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(tty),
-                ]));
-            }
-
-            // Display session status
-            lines.push(Line::from(""));
+            // Line 1: Pane ID [quick] │ ● Status │ ⎇ Branch
             let (status_color, status_text) = status_display(&session.status);
-            lines.push(Line::from(vec![
-                Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
+            let mut header_spans: Vec<Span<'_>> = vec![
+                Span::styled(
+                    format!("#{}", pane.pane_id),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(quick_num_display, Style::default().fg(Color::DarkGray)),
+                Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                Span::styled("● ", Style::default().fg(status_color)),
                 Span::styled(status_text, Style::default().fg(status_color)),
-            ]));
-
-            // Display git branch
+            ];
             if let Some(branch) = &session.git_branch {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled("Branch: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(branch, Style::default().fg(Color::Cyan)),
-                ]));
+                header_spans.push(Span::styled("  │ ", Style::default().fg(Color::DarkGray)));
+                header_spans.push(Span::styled("⎇ ", Style::default().fg(Color::Cyan)));
+                header_spans.push(Span::styled(
+                    branch.as_str(),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+            let mut lines = vec![Line::from(header_spans)];
+
+            // Line 2: Workspace │ TTY
+            let mut info_spans: Vec<Span<'_>> = vec![Span::styled(
+                &pane.workspace,
+                Style::default().fg(Color::Yellow),
+            )];
+            if let Some(tty) = &pane.tty_name {
+                info_spans.push(Span::styled("  │ ", Style::default().fg(Color::DarkGray)));
+                info_spans.push(Span::styled(tty, Style::default().fg(Color::DarkGray)));
+            }
+            lines.push(Line::from(info_spans));
+
+            // Line 3: CWD (if present)
+            if let Some(cwd) = pane.cwd_path() {
+                lines.push(Line::from(Span::styled(
+                    cwd,
+                    Style::default().fg(Color::DarkGray),
+                )));
             }
 
             // Display last prompt and last output preview
-            let fixed_lines: u16 = 15;
-            let available_for_preview = area.height.saturating_sub(fixed_lines) as usize;
+            // Dynamically compute header height: actual lines + 2 for block border
+            let header_lines = lines.len() as u16 + 2;
+            let available_for_preview = area.height.saturating_sub(header_lines) as usize;
             let inner_width = (area.width.saturating_sub(2)) as usize;
 
             if available_for_preview >= 1 {
