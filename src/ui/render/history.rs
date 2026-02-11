@@ -9,6 +9,7 @@ use ratatui::{
 };
 use std::hash::{Hash, Hasher};
 use std::time::SystemTime;
+use unicode_width::UnicodeWidthStr;
 
 use super::summary::{elapsed_time_color, format_relative_time};
 use super::HistoryLinesCache;
@@ -19,6 +20,35 @@ fn hash_str(s: &str) -> u64 {
     hasher.finish()
 }
 
+const HISTORY_LIST_HIGHLIGHT_SYMBOL: &str = ">> ";
+const HISTORY_LIST_BORDER_WIDTH: usize = 2;
+
+fn history_list_inner_width(area_width: u16, highlight_symbol: &str) -> usize {
+    let reserved = HISTORY_LIST_BORDER_WIDTH + highlight_symbol.width();
+    usize::from(area_width).saturating_sub(reserved)
+}
+
+fn truncate_history_prompt(
+    first_line: &str,
+    turn_num: usize,
+    time_display: &str,
+    inner_width: usize,
+) -> String {
+    let num_str = format!("#{}", turn_num);
+    let prefix_len = num_str.len() + 1 + time_display.len() + 1;
+    let prompt_max = inner_width.saturating_sub(prefix_len);
+
+    if first_line.chars().count() > prompt_max {
+        let s: String = first_line
+            .chars()
+            .take(prompt_max.saturating_sub(3))
+            .collect();
+        format!("{}...", s)
+    } else {
+        first_line.to_string()
+    }
+}
+
 /// Render the history turn list in the details panel area.
 pub(super) fn render_history_list(
     f: &mut ratatui::Frame,
@@ -27,7 +57,7 @@ pub(super) fn render_history_list(
     list_state: &mut ListState,
     timestamps: &[Option<SystemTime>],
 ) {
-    let inner_width = area.width.saturating_sub(5) as usize; // borders(2) + highlight symbol ">> "(3)
+    let inner_width = history_list_inner_width(area.width, HISTORY_LIST_HIGHLIGHT_SYMBOL);
 
     let items: Vec<ListItem> = turns
         .iter()
@@ -50,17 +80,8 @@ pub(super) fn render_history_list(
             let first_line = turn.user_prompt.lines().next().unwrap_or("");
 
             let num_str = format!("#{}", turn_num);
-            let prefix_len = num_str.len() + 1 + time_display.len() + 1;
-            let prompt_max = inner_width.saturating_sub(prefix_len);
-            let truncated_prompt: String = if first_line.chars().count() > prompt_max {
-                let s: String = first_line
-                    .chars()
-                    .take(prompt_max.saturating_sub(3))
-                    .collect();
-                format!("{}...", s)
-            } else {
-                first_line.to_string()
-            };
+            let truncated_prompt =
+                truncate_history_prompt(first_line, turn_num, &time_display, inner_width);
 
             let line = Line::from(vec![
                 Span::styled(
@@ -90,9 +111,42 @@ pub(super) fn render_history_list(
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol(">> ");
+        .highlight_symbol(HISTORY_LIST_HIGHLIGHT_SYMBOL);
 
     f.render_stateful_widget(list, area, list_state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_history_list_inner_width_matches_highlight_symbol_width() {
+        assert_eq!(history_list_inner_width(20, ">> "), 15);
+    }
+
+    #[test]
+    fn test_history_list_inner_width_uses_unicode_display_width() {
+        // Full-width greater-than signs are width=2 each.
+        assert_eq!(history_list_inner_width(20, "＞＞ "), 13);
+    }
+
+    #[test]
+    fn test_history_list_inner_width_saturates_at_zero() {
+        assert_eq!(history_list_inner_width(4, ">> "), 0);
+    }
+
+    #[test]
+    fn test_truncate_history_prompt_no_truncation() {
+        let prompt = truncate_history_prompt("hello world", 12, "10m", 40);
+        assert_eq!(prompt, "hello world");
+    }
+
+    #[test]
+    fn test_truncate_history_prompt_narrow_width() {
+        let prompt = truncate_history_prompt("abcdefghij", 999, "1h", 8);
+        assert_eq!(prompt, "...");
+    }
 }
 
 /// Render details panel in history browsing mode.
