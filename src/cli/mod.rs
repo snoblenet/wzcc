@@ -17,6 +17,9 @@ const WEZTERM_CLI_TIMEOUT_DEFAULT: Duration = Duration::from_secs(3);
 const WEZTERM_CLI_TIMEOUT_SLOW: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const PIPE_RECV_TIMEOUT: Duration = Duration::from_millis(200);
+/// Maximum scrollback lines to request from wezterm.
+/// wezterm clamps this to the actual scrollback size, so over-requesting is safe.
+const SCROLLBACK_START_LINE: &str = "-10000";
 
 fn spawn_pipe_reader<R>(mut reader: R) -> Receiver<std::io::Result<Vec<u8>>>
 where
@@ -278,10 +281,16 @@ impl WeztermCli {
 
     /// Retrieve the textual content of a pane including ANSI escape sequences.
     /// Returns the raw stdout bytes because `ansi-to-tui` works with `&[u8]`.
-    pub fn get_text(pane_id: u32) -> Result<Vec<u8>> {
+    /// When `scrollback` is true the full scrollback buffer is included.
+    pub fn get_text(pane_id: u32, scrollback: bool) -> Result<Vec<u8>> {
         let pane_id_str = pane_id.to_string();
+        let mut args = vec!["cli", "get-text", "--pane-id", &pane_id_str, "--escapes"];
+        if scrollback {
+            args.push("--start-line");
+            args.push(SCROLLBACK_START_LINE);
+        }
         let output = run_wezterm_cli(
-            &["cli", "get-text", "--pane-id", &pane_id_str, "--escapes"],
+            &args,
             WEZTERM_CLI_TIMEOUT_SLOW,
             &format!("cli get-text --pane-id {} --escapes", pane_id),
         )?;
@@ -499,7 +508,7 @@ mod tests {
         let panes = ds.list_panes().unwrap();
 
         if let Some(pane) = panes.iter().find(|p| p.is_active) {
-            let result = WeztermCli::get_text(pane.pane_id);
+            let result = WeztermCli::get_text(pane.pane_id, false);
             assert!(result.is_ok());
             assert!(!result.unwrap().is_empty());
         }
@@ -523,7 +532,15 @@ mod tests {
     #[test]
     #[ignore]
     fn test_get_text_nonexistent_pane() {
-        let result = WeztermCli::get_text(99999);
+        let result = WeztermCli::get_text(99999, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scrollback_start_line_is_negative() {
+        // The constant must be a negative number string so wezterm fetches
+        // scrollback lines before the visible screen.
+        let val: i64 = SCROLLBACK_START_LINE.parse().unwrap();
+        assert!(val < 0);
     }
 }

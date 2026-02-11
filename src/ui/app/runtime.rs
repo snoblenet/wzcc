@@ -774,6 +774,7 @@ impl App {
             cached_history_lines: &mut self.cached_history_lines,
             cached_preview_lines: &mut self.cached_preview_lines,
             live_pane_bytes: self.live_pane_bytes.as_deref(),
+            live_pane_bytes_hash: self.live_pane_bytes_hash,
             live_pane_scroll_offset: &mut self.live_pane_scroll_offset,
             cached_live_pane_lines: &mut self.cached_live_pane_lines,
             live_pane_error: self.live_pane_poll_failures > 0,

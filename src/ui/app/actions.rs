@@ -478,7 +478,9 @@ impl App {
                 }
                 self.detail_mode = DetailMode::LivePane;
                 self.live_pane_bytes = None;
-                self.live_pane_scroll_offset = 0;
+                // Start at the bottom so the most recent output is visible.
+                // The render function clamps this to max_scroll.
+                self.live_pane_scroll_offset = usize::MAX;
                 self.cached_live_pane_lines = None;
                 self.live_pane_poll_failures = 0;
                 // Force immediate first fetch
@@ -499,6 +501,7 @@ impl App {
         }
         self.detail_mode = DetailMode::Summary;
         self.live_pane_bytes = None;
+        self.live_pane_bytes_hash = 0;
         self.live_pane_scroll_offset = 0;
         self.cached_live_pane_lines = None;
         self.live_pane_poll_failures = 0;
@@ -531,14 +534,28 @@ impl App {
         if let Some(i) = self.list_state.selected() {
             if let Some(session) = self.sessions.get(i) {
                 let pane_id = session.pane.pane_id;
-                match WeztermCli::get_text(pane_id) {
+                match WeztermCli::get_text(pane_id, true) {
                     Ok(bytes) => {
                         self.live_pane_poll_failures = 0;
-                        // Only mark dirty if content actually changed (byte equality)
-                        let changed = self.live_pane_bytes.as_ref() != Some(&bytes);
+                        // Use hash-based change detection to avoid O(n) byte
+                        // comparison on every poll (scrollback can be large).
+                        let new_hash = {
+                            use std::hash::{Hash, Hasher};
+                            let mut h = std::hash::DefaultHasher::new();
+                            bytes.hash(&mut h);
+                            h.finish()
+                        };
+                        let first_fetch = self.live_pane_bytes.is_none();
+                        let changed = new_hash != self.live_pane_bytes_hash || first_fetch;
                         if changed {
+                            self.live_pane_bytes_hash = new_hash;
                             self.live_pane_bytes = Some(bytes);
                             self.cached_live_pane_lines = None; // Invalidate render cache
+                            if first_fetch {
+                                // Jump to the bottom so the latest output is
+                                // visible; render clamps to max_scroll.
+                                self.live_pane_scroll_offset = usize::MAX;
+                            }
                             self.dirty = true;
                         }
                     }

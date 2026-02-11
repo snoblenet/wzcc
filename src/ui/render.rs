@@ -4,6 +4,7 @@ use ratatui::{
     text::Line,
     widgets::ListState,
 };
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use super::session::ClaudeSession;
@@ -26,7 +27,8 @@ pub type HistoryLinesCache = Option<((u64, usize), Vec<Line<'static>>)>;
 /// Cache entry for details preview: ((text_hash, width, max_lines), rendered_lines).
 pub type PreviewLinesCache = Option<((u64, usize, usize), Vec<Line<'static>>)>;
 /// Cache entry for live pane view: ((content_hash, width), rendered_lines).
-pub type LivePaneLinesCache = Option<((u64, usize), Vec<Line<'static>>)>;
+/// Uses `Arc` to avoid cloning all lines on every frame.
+pub type LivePaneLinesCache = Option<((u64, usize), Arc<Vec<Line<'static>>>)>;
 
 /// Detail panel display mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,7 @@ pub struct DetailsRenderCtx<'a> {
     pub cached_history_lines: &'a mut HistoryLinesCache,
     pub cached_preview_lines: &'a mut PreviewLinesCache,
     pub live_pane_bytes: Option<&'a [u8]>,
+    pub live_pane_bytes_hash: u64,
     pub live_pane_scroll_offset: &'a mut usize,
     pub cached_live_pane_lines: &'a mut LivePaneLinesCache,
     pub live_pane_error: bool,
@@ -101,6 +104,7 @@ pub fn render_details(f: &mut ratatui::Frame, area: Rect, ctx: &mut DetailsRende
             f,
             content_area,
             ctx.live_pane_bytes,
+            ctx.live_pane_bytes_hash,
             ctx.live_pane_scroll_offset,
             ctx.cached_live_pane_lines,
             ctx.live_pane_error,

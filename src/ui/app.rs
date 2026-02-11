@@ -148,6 +148,8 @@ pub struct App {
     cached_preview_lines: Option<((u64, usize, usize), Vec<ratatui::text::Line<'static>>)>,
     /// Cached raw ANSI bytes from wezterm cli get-text --escapes
     live_pane_bytes: Option<Vec<u8>>,
+    /// Pre-computed hash of `live_pane_bytes` (avoids rehashing during render)
+    live_pane_bytes_hash: u64,
     /// Scroll offset within live pane view (line-level)
     live_pane_scroll_offset: usize,
     /// Cached rendered lines for live pane view
@@ -221,6 +223,7 @@ impl App {
             cached_history_lines: None,
             cached_preview_lines: None,
             live_pane_bytes: None,
+            live_pane_bytes_hash: 0,
             live_pane_scroll_offset: 0,
             cached_live_pane_lines: None,
             last_live_pane_fetch: Instant::now(),

@@ -4,7 +4,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use super::LivePaneLinesCache;
 
@@ -13,44 +13,53 @@ pub(super) fn render_live_pane(
     f: &mut ratatui::Frame,
     area: Rect,
     raw_bytes: Option<&[u8]>,
+    content_hash: u64,
     scroll_offset: &mut usize,
     cached_lines: &mut LivePaneLinesCache,
     has_error: bool,
 ) {
     let inner_width = area.width.saturating_sub(2) as usize;
 
-    let mut lines: Vec<Line<'static>> = if let Some(bytes) = raw_bytes {
-        let content_hash = hash_bytes(bytes);
+    let lines_arc: Arc<Vec<Line<'static>>> = if let Some(bytes) = raw_bytes {
         let cache_key = (content_hash, inner_width);
 
         if let Some((cached_key, cached)) = cached_lines.as_ref() {
             if *cached_key == cache_key {
-                cached.clone()
+                Arc::clone(cached)
             } else {
-                let rendered = ansi_bytes_to_lines(bytes);
-                *cached_lines = Some((cache_key, rendered.clone()));
+                let rendered = Arc::new(ansi_bytes_to_lines(bytes));
+                *cached_lines = Some((cache_key, Arc::clone(&rendered)));
                 rendered
             }
         } else {
-            let rendered = ansi_bytes_to_lines(bytes);
-            *cached_lines = Some((cache_key, rendered.clone()));
+            let rendered = Arc::new(ansi_bytes_to_lines(bytes));
+            *cached_lines = Some((cache_key, Arc::clone(&rendered)));
             rendered
         }
     } else {
-        vec![Line::from(Span::styled(
+        Arc::new(vec![Line::from(Span::styled(
             "Loading...",
             Style::default().fg(Color::DarkGray),
-        ))]
+        ))])
     };
 
+    // Build the final line list. We only clone when an error line must be
+    // appended; otherwise we borrow through the Arc.
+    let (lines_ref, _owned);
     if has_error {
+        let mut lines = (*lines_arc).clone();
         lines.push(Line::from(Span::styled(
             "⚠ Pane unavailable (retrying...)",
             Style::default().fg(Color::Yellow),
         )));
+        _owned = lines;
+        lines_ref = &_owned;
+    } else {
+        _owned = Vec::new(); // unused but needed to satisfy borrow checker
+        lines_ref = lines_arc.as_ref();
     }
 
-    let content_height = lines.len();
+    let content_height = lines_ref.len();
     let viewport_height = area.height.saturating_sub(2) as usize;
     let max_scroll = content_height.saturating_sub(viewport_height);
     *scroll_offset = (*scroll_offset).min(max_scroll);
@@ -61,7 +70,7 @@ pub(super) fn render_live_pane(
     } else {
         Color::Green
     };
-    let paragraph = Paragraph::new(lines)
+    let paragraph = Paragraph::new(lines_ref.clone())
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -159,13 +168,6 @@ fn convert_color(c: ratatui_core::style::Color) -> Color {
         C::Rgb(r, g, b) => Color::Rgb(r, g, b),
         C::Indexed(i) => Color::Indexed(i),
     }
-}
-
-/// Compute a fast hash of a byte slice for cache key comparison.
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = std::hash::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[cfg(test)]
@@ -307,14 +309,127 @@ mod tests {
         assert!(dst.add_modifier.contains(Modifier::ITALIC));
     }
 
-    #[test]
-    fn test_hash_bytes_deterministic() {
-        let data = b"hello world";
-        assert_eq!(hash_bytes(data), hash_bytes(data));
+    /// Helper: call render_live_pane inside a test terminal and return the
+    /// final scroll_offset value.
+    fn render_and_get_scroll_offset(
+        content: Option<&[u8]>,
+        content_hash: u64,
+        initial_offset: usize,
+        area_height: u16,
+    ) -> usize {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(80, area_height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut offset = initial_offset;
+        let mut cache: super::LivePaneLinesCache = None;
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, area_height);
+                render_live_pane(
+                    f,
+                    area,
+                    content,
+                    content_hash,
+                    &mut offset,
+                    &mut cache,
+                    false,
+                );
+            })
+            .unwrap();
+        offset
     }
 
     #[test]
-    fn test_hash_bytes_different_input() {
-        assert_ne!(hash_bytes(b"hello"), hash_bytes(b"world"));
+    fn test_scroll_offset_usize_max_clamps_to_bottom() {
+        // 10 lines of content in a 5-row viewport (3 usable after borders)
+        let content = b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10";
+        let offset = render_and_get_scroll_offset(Some(content), 42, usize::MAX, 5);
+        // content_height=10, viewport_height=5-2=3, max_scroll=7
+        assert_eq!(offset, 7);
+    }
+
+    #[test]
+    fn test_scroll_offset_zero_stays_at_top() {
+        let content = b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10";
+        let offset = render_and_get_scroll_offset(Some(content), 42, 0, 5);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_offset_clamped_when_content_shorter_than_viewport() {
+        // 2 lines of content in a 10-row viewport -> max_scroll=0
+        let content = b"hello\nworld";
+        let offset = render_and_get_scroll_offset(Some(content), 42, usize::MAX, 10);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_cache_hit_same_hash_and_width() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let content = b"hello\nworld";
+        let hash = 123;
+        let mut cache: super::LivePaneLinesCache = None;
+
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut offset = 0;
+
+        // First render — populates cache
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, 10);
+                render_live_pane(f, area, Some(content), hash, &mut offset, &mut cache, false);
+            })
+            .unwrap();
+        assert!(cache.is_some());
+        let (cached_key, _) = cache.as_ref().unwrap();
+        assert_eq!(*cached_key, (123, 78)); // 80 - 2 borders = 78
+
+        // Second render with same hash — cache should still be the same key
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, 10);
+                render_live_pane(f, area, Some(content), hash, &mut offset, &mut cache, false);
+            })
+            .unwrap();
+        let (cached_key2, _) = cache.as_ref().unwrap();
+        assert_eq!(*cached_key2, (123, 78));
+    }
+
+    #[test]
+    fn test_cache_miss_different_hash() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let content = b"hello\nworld";
+        let mut cache: super::LivePaneLinesCache = None;
+
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut offset = 0;
+
+        // First render with hash=100
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, 10);
+                render_live_pane(f, area, Some(content), 100, &mut offset, &mut cache, false);
+            })
+            .unwrap();
+        let (key1, _) = cache.as_ref().unwrap();
+        assert_eq!(key1.0, 100);
+
+        // Second render with hash=200 — cache should update
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, 10);
+                render_live_pane(f, area, Some(content), 200, &mut offset, &mut cache, false);
+            })
+            .unwrap();
+        let (key2, _) = cache.as_ref().unwrap();
+        assert_eq!(key2.0, 200);
     }
 }
