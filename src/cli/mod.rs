@@ -7,7 +7,132 @@ pub use install_workspace_switcher::{
 };
 
 use anyhow::{Context, Result};
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const WEZTERM_CLI_TIMEOUT_DEFAULT: Duration = Duration::from_secs(3);
+const WEZTERM_CLI_TIMEOUT_SLOW: Duration = Duration::from_secs(8);
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const PIPE_RECV_TIMEOUT: Duration = Duration::from_millis(200);
+
+fn spawn_pipe_reader<R>(mut reader: R) -> Receiver<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut out = Vec::new();
+        let result = reader.read_to_end(&mut out).map(|_| out);
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn recv_pipe_output(
+    rx: Receiver<std::io::Result<Vec<u8>>>,
+    stream_name: &str,
+    program: &str,
+    action: &str,
+) -> Result<Vec<u8>> {
+    match rx.recv_timeout(PIPE_RECV_TIMEOUT) {
+        Ok(Ok(buf)) => Ok(buf),
+        Ok(Err(err)) => Err(err)
+            .with_context(|| format!("Failed reading {} from {} {}", stream_name, program, action)),
+        Err(RecvTimeoutError::Timeout) => anyhow::bail!(
+            "Timed out while collecting {} from {} {}",
+            stream_name,
+            program,
+            action
+        ),
+        Err(RecvTimeoutError::Disconnected) => anyhow::bail!(
+            "Reader thread terminated unexpectedly while collecting {} from {} {}",
+            stream_name,
+            program,
+            action
+        ),
+    }
+}
+
+fn run_command_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+    action: &str,
+) -> Result<Output> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to start {} {}", program, action))?;
+
+    let child_stdout = child
+        .stdout
+        .take()
+        .context("Failed to capture child stdout pipe")?;
+    let child_stderr = child
+        .stderr
+        .take()
+        .context("Failed to capture child stderr pipe")?;
+    let stdout_rx = spawn_pipe_reader(child_stdout);
+    let stderr_rx = spawn_pipe_reader(child_stderr);
+
+    let start = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("Failed while waiting for {} {}", program, action))?
+        {
+            break status;
+        }
+
+        if start.elapsed() >= timeout {
+            timed_out = true;
+            let _ = child.kill();
+            break child
+                .wait()
+                .with_context(|| format!("Failed to reap timed-out {} {}", program, action))?;
+        }
+
+        thread::sleep(POLL_INTERVAL);
+    };
+
+    if timed_out {
+        anyhow::bail!(
+            "{} {} timed out after {}ms",
+            program,
+            action,
+            timeout.as_millis()
+        );
+    }
+
+    let stdout = recv_pipe_output(stdout_rx, "stdout", program, action)?;
+    let stderr = recv_pipe_output(stderr_rx, "stderr", program, action)?;
+
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+        let message = if stderr.is_empty() {
+            "(no stderr output)".to_string()
+        } else {
+            stderr
+        };
+        anyhow::bail!("{} {} failed: {}", program, action, message);
+    }
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn run_wezterm_cli(args: &[&str], timeout: Duration, action: &str) -> Result<Output> {
+    run_command_with_timeout("wezterm", args, timeout, action)
+}
 
 /// Wezterm CLI wrapper
 pub struct WeztermCli;
@@ -15,110 +140,62 @@ pub struct WeztermCli;
 impl WeztermCli {
     /// Move focus to the specified pane
     pub fn activate_pane(pane_id: u32) -> Result<()> {
-        let output = Command::new("wezterm")
-            .args(["cli", "activate-pane", "--pane-id", &pane_id.to_string()])
-            .output()
-            .context("Failed to execute wezterm cli activate-pane")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli activate-pane failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
-
+        let pane_id_str = pane_id.to_string();
+        run_wezterm_cli(
+            &["cli", "activate-pane", "--pane-id", &pane_id_str],
+            WEZTERM_CLI_TIMEOUT_DEFAULT,
+            &format!("cli activate-pane --pane-id {}", pane_id),
+        )?;
         Ok(())
     }
 
     /// Move focus to the specified tab
     pub fn activate_tab(tab_id: u32) -> Result<()> {
-        let output = Command::new("wezterm")
-            .args(["cli", "activate-tab", "--tab-id", &tab_id.to_string()])
-            .output()
-            .context("Failed to execute wezterm cli activate-tab")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli activate-tab failed for tab {}: {}",
-                tab_id,
-                stderr
-            );
-        }
-
+        let tab_id_str = tab_id.to_string();
+        run_wezterm_cli(
+            &["cli", "activate-tab", "--tab-id", &tab_id_str],
+            WEZTERM_CLI_TIMEOUT_DEFAULT,
+            &format!("cli activate-tab --tab-id {}", tab_id),
+        )?;
         Ok(())
     }
 
     /// Send text to the specified pane via bracketed paste, then press Enter to submit
     pub fn send_text(pane_id: u32, text: &str) -> Result<()> {
-        // Send text as bracketed paste
-        let output = Command::new("wezterm")
-            .args([
-                "cli",
-                "send-text",
-                "--pane-id",
-                &pane_id.to_string(),
-                "--",
-                text,
-            ])
-            .output()
-            .context("Failed to execute wezterm cli send-text")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli send-text failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
+        let pane_id_str = pane_id.to_string();
+        run_wezterm_cli(
+            &["cli", "send-text", "--pane-id", &pane_id_str, "--", text],
+            WEZTERM_CLI_TIMEOUT_DEFAULT,
+            &format!("cli send-text --pane-id {} -- <text>", pane_id),
+        )?;
 
         // Wait for the pane to process the bracketed paste before sending Enter
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        // Send Enter key (carriage return) via --no-paste to trigger submit
-        let output = Command::new("wezterm")
-            .args([
+        run_wezterm_cli(
+            &[
                 "cli",
                 "send-text",
                 "--pane-id",
-                &pane_id.to_string(),
+                &pane_id_str,
                 "--no-paste",
                 "\r",
-            ])
-            .output()
-            .context("Failed to send enter key to pane")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli send-text (enter) failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
+            ],
+            WEZTERM_CLI_TIMEOUT_DEFAULT,
+            &format!("cli send-text --pane-id {} --no-paste <CR>", pane_id),
+        )?;
 
         Ok(())
     }
 
     /// Kill (close) the specified pane
     pub fn kill_pane(pane_id: u32) -> Result<()> {
-        let output = Command::new("wezterm")
-            .args(["cli", "kill-pane", "--pane-id", &pane_id.to_string()])
-            .output()
-            .context("Failed to execute wezterm cli kill-pane")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli kill-pane failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
-
+        let pane_id_str = pane_id.to_string();
+        run_wezterm_cli(
+            &["cli", "kill-pane", "--pane-id", &pane_id_str],
+            WEZTERM_CLI_TIMEOUT_DEFAULT,
+            &format!("cli kill-pane --pane-id {}", pane_id),
+        )?;
         Ok(())
     }
 
@@ -140,12 +217,13 @@ impl WeztermCli {
     ) -> Result<u32> {
         let (shell, shell_cmd) = build_shell_command(prog, args);
 
-        let output = Command::new("wezterm")
-            .args([
+        let pane_id_str = pane_id.to_string();
+        let output = run_wezterm_cli(
+            &[
                 "cli",
                 "split-pane",
                 "--pane-id",
-                &pane_id.to_string(),
+                &pane_id_str,
                 direction,
                 "--cwd",
                 cwd,
@@ -153,14 +231,13 @@ impl WeztermCli {
                 &shell,
                 "-ic",
                 &shell_cmd,
-            ])
-            .output()
-            .context("Failed to execute wezterm cli split-pane")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("wezterm cli split-pane failed: {}", stderr);
-        }
+            ],
+            WEZTERM_CLI_TIMEOUT_SLOW,
+            &format!(
+                "cli split-pane --pane-id {} {} --cwd {}",
+                pane_id, direction, cwd
+            ),
+        )?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         parse_pane_id(&stdout)
@@ -178,8 +255,8 @@ impl WeztermCli {
         let (shell, shell_cmd) = build_shell_command(prog, args);
         let window_id_str = window_id.to_string();
 
-        let output = Command::new("wezterm")
-            .args([
+        let output = run_wezterm_cli(
+            &[
                 "cli",
                 "spawn",
                 "--cwd",
@@ -190,14 +267,10 @@ impl WeztermCli {
                 &shell,
                 "-ic",
                 &shell_cmd,
-            ])
-            .output()
-            .context("Failed to execute wezterm cli spawn")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("wezterm cli spawn failed: {}", stderr);
-        }
+            ],
+            WEZTERM_CLI_TIMEOUT_SLOW,
+            &format!("cli spawn --cwd {} --window-id {}", cwd, window_id),
+        )?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         parse_pane_id(&stdout)
@@ -206,70 +279,34 @@ impl WeztermCli {
     /// Retrieve the textual content of a pane including ANSI escape sequences.
     /// Returns the raw stdout bytes because `ansi-to-tui` works with `&[u8]`.
     pub fn get_text(pane_id: u32) -> Result<Vec<u8>> {
-        let output = Command::new("wezterm")
-            .args([
-                "cli",
-                "get-text",
-                "--pane-id",
-                &pane_id.to_string(),
-                "--escapes",
-            ])
-            .output()
-            .context("Failed to execute wezterm cli get-text")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli get-text failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
-
+        let pane_id_str = pane_id.to_string();
+        let output = run_wezterm_cli(
+            &["cli", "get-text", "--pane-id", &pane_id_str, "--escapes"],
+            WEZTERM_CLI_TIMEOUT_SLOW,
+            &format!("cli get-text --pane-id {} --escapes", pane_id),
+        )?;
         Ok(output.stdout)
     }
 
     /// Retrieve the textual content of a pane as plain text (no ANSI escapes).
     pub fn get_text_plain(pane_id: u32) -> Result<String> {
-        let output = Command::new("wezterm")
-            .args(["cli", "get-text", "--pane-id", &pane_id.to_string()])
-            .output()
-            .context("Failed to execute wezterm cli get-text (plain)")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli get-text (plain) failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
-
+        let pane_id_str = pane_id.to_string();
+        let output = run_wezterm_cli(
+            &["cli", "get-text", "--pane-id", &pane_id_str],
+            WEZTERM_CLI_TIMEOUT_SLOW,
+            &format!("cli get-text --pane-id {}", pane_id),
+        )?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     /// Change tab title for the specified pane
     pub fn set_tab_title(pane_id: u32, title: &str) -> Result<()> {
-        let output = Command::new("wezterm")
-            .args([
-                "cli",
-                "set-tab-title",
-                "--pane-id",
-                &pane_id.to_string(),
-                title,
-            ])
-            .output()
-            .context("Failed to execute wezterm cli set-tab-title")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "wezterm cli set-tab-title failed for pane {}: {}",
-                pane_id,
-                stderr
-            );
-        }
-
+        let pane_id_str = pane_id.to_string();
+        run_wezterm_cli(
+            &["cli", "set-tab-title", "--pane-id", &pane_id_str, title],
+            WEZTERM_CLI_TIMEOUT_DEFAULT,
+            &format!("cli set-tab-title --pane-id {}", pane_id),
+        )?;
         Ok(())
     }
 }
@@ -308,6 +345,7 @@ fn parse_pane_id(stdout: &str) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn test_shell_quote_simple() {
@@ -343,6 +381,86 @@ mod tests {
         assert!(parse_pane_id("abc").is_err());
         assert!(parse_pane_id("-1").is_err());
         assert!(parse_pane_id("42 extra").is_err());
+    }
+
+    #[test]
+    fn test_run_command_with_timeout_success() {
+        let output = run_command_with_timeout(
+            "/bin/sh",
+            &["-c", "printf 'ok'"],
+            Duration::from_secs(1),
+            "test-success",
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ok");
+    }
+
+    #[test]
+    fn test_run_command_with_timeout_expires() {
+        let err = run_command_with_timeout(
+            "/bin/sh",
+            &["-c", "sleep 1"],
+            Duration::from_millis(50),
+            "test-timeout",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn test_run_command_with_timeout_nonzero_with_stderr() {
+        let err = run_command_with_timeout(
+            "/bin/sh",
+            &["-c", "echo boom >&2; exit 7"],
+            Duration::from_secs(1),
+            "test-fail-stderr",
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("failed"));
+        assert!(msg.contains("boom"));
+    }
+
+    #[test]
+    fn test_run_command_with_timeout_nonzero_without_stderr() {
+        let err = run_command_with_timeout(
+            "/bin/sh",
+            &["-c", "exit 9"],
+            Duration::from_secs(1),
+            "test-fail-no-stderr",
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("failed"));
+        assert!(msg.contains("(no stderr output)"));
+    }
+
+    #[test]
+    fn test_run_command_with_timeout_large_output_no_false_timeout() {
+        let output = run_command_with_timeout(
+            "/bin/sh",
+            &["-c", "yes x | head -n 50000"],
+            Duration::from_secs(2),
+            "test-large-output",
+        )
+        .unwrap();
+        assert!(output.stdout.len() > 50_000);
+    }
+
+    #[test]
+    fn test_run_command_with_timeout_pipe_held_by_descendant_returns_quickly() {
+        let started = Instant::now();
+        let err = run_command_with_timeout(
+            "/bin/sh",
+            &["-c", "(sleep 2) & exit 0"],
+            Duration::from_secs(1),
+            "test-held-pipe",
+        )
+        .unwrap_err();
+        let elapsed = started.elapsed();
+        let msg = err.to_string();
+        assert!(msg.contains("Timed out while collecting stdout"));
+        assert!(elapsed < Duration::from_secs(1));
     }
 
     #[test]
