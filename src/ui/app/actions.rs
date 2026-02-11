@@ -126,7 +126,8 @@ impl App {
                         return;
                     }
                 };
-                self.add_pane_pending = Some((pane_id, cwd));
+                let window_id = session.pane.window_id;
+                self.add_pane_pending = Some((pane_id, cwd, window_id));
                 self.dirty = true;
             }
         }
@@ -135,10 +136,10 @@ impl App {
     /// Execute the add-pane action after mode selection.
     /// `mode` is `"--right"`, `"--bottom"`, or `"--tab"`.
     pub(super) fn confirm_add_pane(&mut self, mode: &str) -> Result<()> {
-        if let Some((pane_id, cwd)) = self.add_pane_pending.take() {
+        if let Some((pane_id, cwd, window_id)) = self.add_pane_pending.take() {
             let (prog, args) = self.config.spawn_program_and_args();
             let result = if mode == "--tab" {
-                WeztermCli::spawn_tab(&cwd, prog, args)
+                WeztermCli::spawn_tab(&cwd, window_id, prog, args)
             } else {
                 WeztermCli::split_pane(pane_id, &cwd, prog, args, mode)
             };

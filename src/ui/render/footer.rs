@@ -17,7 +17,7 @@ pub(super) fn render_footer(
     detail_mode: DetailMode,
     toast: Option<&Toast>,
     kill_confirm: Option<&(u32, String)>,
-    add_pane_pending: Option<&(u32, String)>,
+    add_pane_pending: Option<&(u32, String, u32)>,
 ) {
     if let Some(toast) = toast {
         let (color, prefix) = match toast.toast_type {
@@ -56,7 +56,7 @@ pub(super) fn render_footer(
         return;
     }
 
-    if let Some((_pane_id, _cwd)) = add_pane_pending {
+    if let Some((_pane_id, _cwd, _window_id)) = add_pane_pending {
         let prompt_text = Line::from(vec![
             Span::styled("Add pane: ", Style::default().fg(Color::Green)),
             Span::styled(

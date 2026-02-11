@@ -97,8 +97,8 @@ pub struct App {
     toast: Option<Toast>,
     /// Kill confirmation mode (stores pane_id and display label)
     kill_confirm: Option<(u32, String)>,
-    /// Add pane mode: stores (pane_id, cwd) for split direction selection
-    add_pane_pending: Option<(u32, String)>,
+    /// Add pane mode: stores (pane_id, cwd, window_id) for split direction selection
+    add_pane_pending: Option<(u32, String, u32)>,
     /// Detail panel display mode
     detail_mode: DetailMode,
     /// Conversation turns for history browsing (newest first)

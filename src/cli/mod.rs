@@ -169,14 +169,27 @@ impl WeztermCli {
     /// Spawn a new tab with the given working directory and program.
     /// Returns the pane_id of the newly created pane.
     ///
+    /// The new tab is created in the same window as the source pane so that it
+    /// appears in the correct workspace rather than in wzcc's own window.
+    ///
     /// Like `split_pane`, the command is executed via `$SHELL -ic` for alias support.
     /// Expected stdout format from `wezterm cli spawn`: a single integer (e.g., "42\n")
-    pub fn spawn_tab(cwd: &str, prog: &str, args: &[String]) -> Result<u32> {
+    pub fn spawn_tab(cwd: &str, window_id: u32, prog: &str, args: &[String]) -> Result<u32> {
         let (shell, shell_cmd) = build_shell_command(prog, args);
+        let window_id_str = window_id.to_string();
 
         let output = Command::new("wezterm")
             .args([
-                "cli", "spawn", "--cwd", cwd, "--", &shell, "-ic", &shell_cmd,
+                "cli",
+                "spawn",
+                "--cwd",
+                cwd,
+                "--window-id",
+                &window_id_str,
+                "--",
+                &shell,
+                "-ic",
+                &shell_cmd,
             ])
             .output()
             .context("Failed to execute wezterm cli spawn")?;

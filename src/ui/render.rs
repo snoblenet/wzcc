@@ -156,7 +156,7 @@ pub fn render_footer(
     detail_mode: DetailMode,
     toast: Option<&super::toast::Toast>,
     kill_confirm: Option<&(u32, String)>,
-    add_pane_pending: Option<&(u32, String)>,
+    add_pane_pending: Option<&(u32, String, u32)>,
 ) {
     footer::render_footer(
         f,
