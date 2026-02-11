@@ -160,17 +160,48 @@ impl App {
                     // Add pane mode selection: split right, down, or new tab
                     match key.code {
                         KeyCode::Char('r') | KeyCode::Char('R') => {
-                            self.confirm_add_pane("--right")?;
+                            self.select_command_or_spawn(SplitDirection::Right)?;
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') => {
-                            self.confirm_add_pane("--bottom")?;
+                            self.select_command_or_spawn(SplitDirection::Bottom)?;
                         }
                         KeyCode::Char('t') | KeyCode::Char('T') => {
-                            self.confirm_add_pane("--tab")?;
+                            self.select_command_or_spawn(SplitDirection::Tab)?;
                         }
                         _ => {
                             self.cancel_add_pane();
                         }
+                    }
+                }
+                Event::Key(key) if self.command_select_pending.is_some() => {
+                    // Command selection mode: pick which command to spawn
+                    match key.code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let len = self.resolved_commands.len();
+                            if let Some(i) = self.command_select_state.selected() {
+                                if i + 1 < len {
+                                    self.command_select_state.select(Some(i + 1));
+                                    self.dirty = true;
+                                }
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if let Some(i) = self.command_select_state.selected() {
+                                if i > 0 {
+                                    self.command_select_state.select(Some(i - 1));
+                                    self.dirty = true;
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(i) = self.command_select_state.selected() {
+                                self.confirm_command_select(i)?;
+                            }
+                        }
+                        KeyCode::Esc => {
+                            self.cancel_command_select();
+                        }
+                        _ => {}
                     }
                 }
                 Event::Key(key) if self.detail_mode == DetailMode::HistoryList => {
@@ -440,9 +471,11 @@ impl App {
                     }
                 }
                 Event::Mouse(mouse)
-                    if self.input_mode || self.detail_mode != DetailMode::Summary =>
+                    if self.input_mode
+                        || self.detail_mode != DetailMode::Summary
+                        || self.command_select_pending.is_some() =>
                 {
-                    // Ignore mouse in input mode, history mode, and live pane mode
+                    // Ignore mouse in input mode, history mode, live pane mode, and command selection
                     let _ = mouse;
                 }
                 Event::Mouse(mouse) => {
@@ -630,6 +663,17 @@ impl App {
             self.toast.as_ref(),
             self.kill_confirm.as_ref(),
             self.add_pane_pending.as_ref(),
+            self.command_select_pending.is_some(),
         );
+
+        // Render command selection popup overlay (on top of everything)
+        if self.command_select_pending.is_some() {
+            render_command_select(
+                f,
+                size,
+                &self.resolved_commands,
+                &mut self.command_select_state,
+            );
+        }
     }
 }

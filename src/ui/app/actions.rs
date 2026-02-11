@@ -133,30 +133,91 @@ impl App {
         }
     }
 
-    /// Execute the add-pane action after mode selection.
-    /// `mode` is `"--right"`, `"--bottom"`, or `"--tab"`.
-    pub(super) fn confirm_add_pane(&mut self, mode: &str) -> Result<()> {
+    /// After direction is selected, either spawn immediately (single command)
+    /// or enter command selection mode (multiple commands).
+    pub(super) fn select_command_or_spawn(&mut self, direction: SplitDirection) -> Result<()> {
+        // Must .take() to clear the direction-selection state so the
+        // add_pane_pending key handler no longer intercepts events.
         if let Some((pane_id, cwd, window_id)) = self.add_pane_pending.take() {
-            let (prog, args) = self.config.spawn_program_and_args();
-            let result = if mode == "--tab" {
-                WeztermCli::spawn_tab(&cwd, window_id, prog, args)
-            } else {
-                WeztermCli::split_pane(pane_id, &cwd, prog, args, mode)
-            };
-            match result {
-                Ok(new_pane_id) => {
-                    self.toast = Some(Toast::success(format!("Added Pane {}", new_pane_id)));
-                    self.refresh()?;
-                    self.update_watched_dirs()?;
+            if self.resolved_commands.len() <= 1 {
+                // Single command (or default): spawn immediately
+                let cmd = &self.resolved_commands[0];
+                let (prog, args) = Config::program_and_args(cmd);
+                let result = match direction {
+                    SplitDirection::Tab => WeztermCli::spawn_tab(&cwd, window_id, prog, args),
+                    SplitDirection::Right => {
+                        WeztermCli::split_pane(pane_id, &cwd, prog, args, "--right")
+                    }
+                    SplitDirection::Bottom => {
+                        WeztermCli::split_pane(pane_id, &cwd, prog, args, "--bottom")
+                    }
+                };
+                match result {
+                    Ok(new_pane_id) => {
+                        self.toast = Some(Toast::success(format!("Added Pane {}", new_pane_id)));
+                        self.refresh()?;
+                        self.update_watched_dirs()?;
+                    }
+                    Err(e) => {
+                        self.toast = Some(Toast::error(format!("Failed to add pane: {}", e)));
+                    }
                 }
-                Err(e) => {
-                    self.toast = Some(Toast::error(format!("Failed to add pane: {}", e)));
+                self.dirty = true;
+                self.needs_full_redraw = true;
+            } else {
+                // Multiple commands: enter command selection mode
+                self.command_select_pending = Some(AddPaneContext {
+                    pane_id,
+                    cwd,
+                    window_id,
+                    direction,
+                });
+                self.command_select_state.select(Some(0));
+                self.dirty = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// Execute spawn with the selected command from the command selector.
+    pub(super) fn confirm_command_select(&mut self, index: usize) -> Result<()> {
+        if let Some(ctx) = self.command_select_pending.take() {
+            if let Some(cmd) = self.resolved_commands.get(index) {
+                let (prog, args) = Config::program_and_args(cmd);
+                let result = match ctx.direction {
+                    SplitDirection::Tab => {
+                        WeztermCli::spawn_tab(&ctx.cwd, ctx.window_id, prog, args)
+                    }
+                    SplitDirection::Right => {
+                        WeztermCli::split_pane(ctx.pane_id, &ctx.cwd, prog, args, "--right")
+                    }
+                    SplitDirection::Bottom => {
+                        WeztermCli::split_pane(ctx.pane_id, &ctx.cwd, prog, args, "--bottom")
+                    }
+                };
+                match result {
+                    Ok(new_pane_id) => {
+                        self.toast = Some(Toast::success(format!("Added Pane {}", new_pane_id)));
+                        self.refresh()?;
+                        self.update_watched_dirs()?;
+                    }
+                    Err(e) => {
+                        self.toast = Some(Toast::error(format!("Failed to add pane: {}", e)));
+                    }
                 }
             }
             self.dirty = true;
             self.needs_full_redraw = true;
         }
+        self.command_select_state.select(None);
         Ok(())
+    }
+
+    /// Cancel the command selection mode
+    pub(super) fn cancel_command_select(&mut self) {
+        self.command_select_pending = None;
+        self.command_select_state.select(None);
+        self.dirty = true;
     }
 
     /// Cancel the add-pane mode

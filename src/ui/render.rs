@@ -8,6 +8,8 @@ use std::time::SystemTime;
 
 use super::session::ClaudeSession;
 
+#[path = "render/command_select.rs"]
+mod command_select;
 #[path = "render/footer.rs"]
 mod footer;
 #[path = "render/history.rs"]
@@ -149,6 +151,7 @@ pub fn render_details(f: &mut ratatui::Frame, area: Rect, ctx: &mut DetailsRende
 }
 
 /// Render the footer with keybindings help.
+#[allow(clippy::too_many_arguments)]
 pub fn render_footer(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -157,6 +160,7 @@ pub fn render_footer(
     toast: Option<&super::toast::Toast>,
     kill_confirm: Option<&(u32, String)>,
     add_pane_pending: Option<&(u32, String, u32)>,
+    command_select_active: bool,
 ) {
     footer::render_footer(
         f,
@@ -166,5 +170,16 @@ pub fn render_footer(
         toast,
         kill_confirm,
         add_pane_pending,
+        command_select_active,
     );
+}
+
+/// Render the command selection popup overlay.
+pub fn render_command_select(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    commands: &[crate::config::SpawnCommand],
+    list_state: &mut ListState,
+) {
+    command_select::render_command_select(f, area, commands, list_state);
 }

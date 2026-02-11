@@ -1,5 +1,5 @@
 use crate::cli::{switch_workspace, WeztermCli};
-use crate::config::Config;
+use crate::config::{Config, SpawnCommand};
 use crate::datasource::git::GitBranchCache;
 use crate::datasource::{
     PaneDataSource, ProcessDataSource, SystemProcessDataSource, WeztermDataSource,
@@ -32,7 +32,8 @@ use super::event::{
 };
 use super::input_buffer::InputBuffer;
 use super::render::{
-    render_details, render_footer, render_list, DetailMode, DetailsRenderCtx, LivePaneLinesCache,
+    render_command_select, render_details, render_footer, render_list, DetailMode,
+    DetailsRenderCtx, LivePaneLinesCache,
 };
 use super::session::ClaudeSession;
 use super::toast::Toast;
@@ -56,6 +57,21 @@ const LIVE_PANE_COOLDOWN_SECS: u64 = 5;
 
 /// Number of consecutive poll failures before auto-exiting live pane view.
 const LIVE_PANE_MAX_FAILURES: u32 = 3;
+
+/// Direction for splitting/adding a new pane.
+pub(super) enum SplitDirection {
+    Right,
+    Bottom,
+    Tab,
+}
+
+/// Context saved after direction selection, pending command choice.
+pub(super) struct AddPaneContext {
+    pub pane_id: u32,
+    pub cwd: String,
+    pub window_id: u32,
+    pub direction: SplitDirection,
+}
 
 /// TUI application
 pub struct App {
@@ -99,6 +115,12 @@ pub struct App {
     kill_confirm: Option<(u32, String)>,
     /// Add pane mode: stores (pane_id, cwd, window_id) for split direction selection
     add_pane_pending: Option<(u32, String, u32)>,
+    /// Pending command selection (after direction chosen, before command chosen)
+    command_select_pending: Option<AddPaneContext>,
+    /// ListState for command selector navigation
+    command_select_state: ListState,
+    /// Resolved commands from config (cached at startup)
+    resolved_commands: Vec<SpawnCommand>,
     /// Detail panel display mode
     detail_mode: DetailMode,
     /// Conversation turns for history browsing (newest first)
@@ -125,8 +147,6 @@ pub struct App {
     last_live_pane_fetch: Instant,
     /// Consecutive poll failure count (circuit-breaker)
     live_pane_poll_failures: u32,
-    /// User configuration loaded from ~/.config/wzcc/config.toml
-    config: Config,
     /// Git branch cache (30s TTL)
     git_branch_cache: GitBranchCache,
     /// Last time a transcript-only refresh was performed (for debouncing)
@@ -152,6 +172,7 @@ impl App {
         };
 
         let toast = config_warning.map(Toast::error);
+        let resolved_commands = config.resolved_commands();
 
         Self {
             sessions: Vec::new(),
@@ -175,6 +196,9 @@ impl App {
             toast,
             kill_confirm: None,
             add_pane_pending: None,
+            command_select_pending: None,
+            command_select_state: ListState::default(),
+            resolved_commands,
             detail_mode: DetailMode::Summary,
             history_turns: Vec::new(),
             history_list_state: ListState::default(),
@@ -188,7 +212,6 @@ impl App {
             cached_live_pane_lines: None,
             last_live_pane_fetch: Instant::now(),
             live_pane_poll_failures: 0,
-            config,
             git_branch_cache: GitBranchCache::new(30),
             last_transcript_refresh: Instant::now(),
             pending_transcript_refresh: false,

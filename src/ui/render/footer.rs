@@ -10,6 +10,7 @@ use crate::ui::toast::{Toast, ToastType};
 use super::DetailMode;
 
 /// Render the footer with keybindings help.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_footer(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -18,6 +19,7 @@ pub(super) fn render_footer(
     toast: Option<&Toast>,
     kill_confirm: Option<&(u32, String)>,
     add_pane_pending: Option<&(u32, String, u32)>,
+    command_select_active: bool,
 ) {
     if let Some(toast) = toast {
         let (color, prefix) = match toast.toast_type {
@@ -52,6 +54,36 @@ pub(super) fn render_footer(
             Span::raw("cancel"),
         ]);
         let paragraph = Paragraph::new(confirm_text);
+        f.render_widget(paragraph, area);
+        return;
+    }
+
+    if command_select_active {
+        let prompt_text = Line::from(vec![
+            Span::styled("Select command: ", Style::default().fg(Color::Green)),
+            Span::styled(
+                "[jk]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Select "),
+            Span::styled(
+                "[Enter]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Confirm "),
+            Span::styled(
+                "[Esc]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Cancel"),
+        ]);
+        let paragraph = Paragraph::new(prompt_text);
         f.render_widget(paragraph, area);
         return;
     }

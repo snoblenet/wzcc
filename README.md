@@ -119,7 +119,7 @@ wzcc tui
 | `i` | Open prompt input (send text to selected session) |
 | `y` | Copy selected session output to clipboard |
 | `x` | Kill (close) selected session's pane (with confirmation) |
-| `a` | Add new Claude Code session (split selected pane, then choose `r`ight/`d`own/`t`ab) |
+| `a` | Add new session (choose direction `r`ight/`d`own/`t`ab, then select command if multiple configured) |
 | `H` | Open conversation history list for selected session |
 | `v` | Open live pane view for selected session |
 | `Enter` / Double-click | Switch to selected session (TUI continues) |
@@ -178,21 +178,39 @@ wzcc tui
 
 wzcc can be configured via `~/.config/wzcc/config.toml`. All settings are optional and have sensible defaults.
 
+### Named Commands
+
+Define multiple commands to choose from when adding a new pane (press `a` → direction → command selector):
+
 ```toml
-# Command to launch when adding a new session (press 'a')
-# Default: ["claude"]
+[[commands]]
+name = "Claude Code"
+command = ["claude"]
+
+[[commands]]
+name = "Codex"
+command = ["codex"]
+
+[[commands]]
+name = "Claude (skip perms)"
+command = ["claude", "--dangerously-skip-permissions"]
+```
+
+When only one command is configured, the selector is skipped and the pane is created immediately. With multiple commands, a popup appears after direction selection where you can pick the command with `j`/`k` and `Enter`.
+
+### Legacy Format
+
+The single-command `spawn_command` field is still supported for backward compatibility:
+
+```toml
+# Single command (legacy format)
 spawn_command = ["claude"]
-
-# With arguments
-# spawn_command = ["claude", "--dangerously-skip-permissions"]
-
-# Custom wrapper script
-# spawn_command = ["my-claude-wrapper", "--profile", "dev"]
 ```
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `spawn_command` | Array of strings | `["claude"]` | Command and arguments to run when spawning a new session |
+| `commands` | Array of tables | — | Named commands with `name` and `command` fields. Shown in command selector when adding a pane. |
+| `spawn_command` | Array of strings | `["claude"]` | Legacy single-command config. Used as fallback when `commands` is not defined. |
 
 ## Architecture
 
