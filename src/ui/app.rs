@@ -795,7 +795,12 @@ mod tests {
     #[test]
     fn test_plan_approval_generates_four_options() {
         let mut app = App::new();
-        app.sessions = vec![make_waiting_session(42, WaitingPrompt::PlanApproval)];
+        app.sessions = vec![make_waiting_session(
+            42,
+            WaitingPrompt::PlanApproval {
+                plan: String::new(),
+            },
+        )];
         app.list_state.select(Some(0));
 
         app.open_answer_select();
@@ -903,7 +908,9 @@ mod tests {
     #[test]
     fn test_tool_permission_popup_on_plan_approval_session_shows_error() {
         let msg = assert_prompt_mismatch(
-            WaitingPrompt::PlanApproval,
+            WaitingPrompt::PlanApproval {
+                plan: String::new(),
+            },
             AnswerPromptKind::ToolPermission,
         );
         assert!(msg.contains("Prompt type changed"));

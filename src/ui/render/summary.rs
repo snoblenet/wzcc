@@ -1,4 +1,5 @@
 use crate::transcript::SessionStatus;
+use crate::transcript::WaitingPrompt;
 use crate::ui::markdown;
 use crate::ui::session::{status_display, ClaudeSession};
 use ratatui::{
@@ -340,47 +341,95 @@ pub(super) fn render_summary_details(
                     Style::default().fg(Color::DarkGray),
                 )]));
 
-                if let Some(prompt) = &session.last_prompt {
-                    lines.push(Line::from(vec![Span::styled(
-                        "💬 Last prompt:",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )]));
-                    let prompt_chars: Vec<char> = prompt.chars().collect();
-                    let max_prompt_len = inner_width * 2;
-                    let truncated: String = if prompt_chars.len() > max_prompt_len {
-                        prompt_chars[..max_prompt_len].iter().collect::<String>() + "..."
-                    } else {
-                        prompt_chars.iter().collect()
-                    };
-                    for line in truncated.lines().take(2) {
-                        lines.push(Line::from(Span::styled(
-                            line.to_string(),
-                            Style::default().fg(Color::Cyan),
-                        )));
+                // When PlanApproval with plan content, show plan instead of last prompt/output
+                let plan_text = match &session.waiting_prompt {
+                    Some(WaitingPrompt::PlanApproval { plan }) if !plan.is_empty() => {
+                        Some(plan.as_str())
                     }
-                }
+                    _ => None,
+                };
 
-                if let Some(output) = &session.last_output {
-                    if session.last_prompt.is_some() {
-                        lines.push(Line::from(""));
-                        lines.push(Line::from(vec![Span::styled(
-                            "─".repeat(inner_width),
-                            Style::default().fg(Color::DarkGray),
-                        )]));
-                    }
-
+                if let Some(plan) = plan_text {
                     lines.push(Line::from(vec![Span::styled(
-                        "🤖 Last output:",
+                        "📋 Claude's plan:",
                         Style::default().add_modifier(Modifier::BOLD),
                     )]));
 
-                    let preview_lines = available_for_preview.saturating_sub(8);
-                    let text_hash = hash_str(output);
+                    let preview_lines = available_for_preview.saturating_sub(4);
+                    let text_hash = hash_str(plan);
                     let cache_key = (text_hash, inner_width, preview_lines);
-                    let output_lines =
-                        if let Some((cached_key, cached)) = ctx.cached_preview_lines.as_ref() {
-                            if *cached_key == cache_key {
-                                cached.clone()
+                    let output_lines = if let Some((cached_key, cached)) =
+                        ctx.cached_preview_lines.as_ref()
+                    {
+                        if *cached_key == cache_key {
+                            cached.clone()
+                        } else {
+                            let rendered = markdown::markdown_to_lines_truncated(
+                                plan,
+                                inner_width,
+                                preview_lines,
+                            );
+                            *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
+                            rendered
+                        }
+                    } else {
+                        let rendered =
+                            markdown::markdown_to_lines_truncated(plan, inner_width, preview_lines);
+                        *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
+                        rendered
+                    };
+                    lines.extend(output_lines);
+                } else {
+                    if let Some(prompt) = &session.last_prompt {
+                        lines.push(Line::from(vec![Span::styled(
+                            "💬 Last prompt:",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )]));
+                        let prompt_chars: Vec<char> = prompt.chars().collect();
+                        let max_prompt_len = inner_width * 2;
+                        let truncated: String = if prompt_chars.len() > max_prompt_len {
+                            prompt_chars[..max_prompt_len].iter().collect::<String>() + "..."
+                        } else {
+                            prompt_chars.iter().collect()
+                        };
+                        for line in truncated.lines().take(2) {
+                            lines.push(Line::from(Span::styled(
+                                line.to_string(),
+                                Style::default().fg(Color::Cyan),
+                            )));
+                        }
+                    }
+
+                    if let Some(output) = &session.last_output {
+                        if session.last_prompt.is_some() {
+                            lines.push(Line::from(""));
+                            lines.push(Line::from(vec![Span::styled(
+                                "─".repeat(inner_width),
+                                Style::default().fg(Color::DarkGray),
+                            )]));
+                        }
+
+                        lines.push(Line::from(vec![Span::styled(
+                            "🤖 Last output:",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )]));
+
+                        let preview_lines = available_for_preview.saturating_sub(8);
+                        let text_hash = hash_str(output);
+                        let cache_key = (text_hash, inner_width, preview_lines);
+                        let output_lines =
+                            if let Some((cached_key, cached)) = ctx.cached_preview_lines.as_ref() {
+                                if *cached_key == cache_key {
+                                    cached.clone()
+                                } else {
+                                    let rendered = markdown::markdown_to_lines_truncated(
+                                        output,
+                                        inner_width,
+                                        preview_lines,
+                                    );
+                                    *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
+                                    rendered
+                                }
                             } else {
                                 let rendered = markdown::markdown_to_lines_truncated(
                                     output,
@@ -389,17 +438,9 @@ pub(super) fn render_summary_details(
                                 );
                                 *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
                                 rendered
-                            }
-                        } else {
-                            let rendered = markdown::markdown_to_lines_truncated(
-                                output,
-                                inner_width,
-                                preview_lines,
-                            );
-                            *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
-                            rendered
-                        };
-                    lines.extend(output_lines);
+                            };
+                        lines.extend(output_lines);
+                    }
                 }
             }
 

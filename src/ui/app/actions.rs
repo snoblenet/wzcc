@@ -635,7 +635,7 @@ impl App {
         let pane_id = session.pane.pane_id;
 
         match waiting {
-            WaitingPrompt::PlanApproval => {
+            WaitingPrompt::PlanApproval { .. } => {
                 self.answer_select_pending = Some(AnswerSelectState {
                     pane_id,
                     title: "Plan Approval (ExitPlanMode)".into(),
@@ -763,7 +763,7 @@ impl App {
                     matches!(
                         (&s.waiting_prompt, state.prompt_kind),
                         (
-                            Some(WaitingPrompt::PlanApproval),
+                            Some(WaitingPrompt::PlanApproval { .. }),
                             AnswerPromptKind::PlanApproval
                         ) | (Some(WaitingPrompt::Ask(_)), AnswerPromptKind::Ask)
                             | (

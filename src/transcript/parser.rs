@@ -123,6 +123,15 @@ impl ContentBlock {
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
+
+    /// Extract plan text from ExitPlanMode input.
+    pub fn parse_plan_text(&self) -> Option<String> {
+        self.input
+            .as_ref()
+            .and_then(|v| v.get("plan"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
 }
 
 /// The message structure within an assistant entry.

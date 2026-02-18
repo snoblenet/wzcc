@@ -19,8 +19,8 @@ pub enum WaitingPrompt {
     Ask(AskUserQuestionInput),
     /// Tool permission request (Bash, Edit, etc.).
     ToolPermission { tool_names: Vec<String> },
-    /// ExitPlanMode — user should jump to pane.
-    PlanApproval,
+    /// ExitPlanMode — user should jump to pane. Carries plan text from input.
+    PlanApproval { plan: String },
 }
 
 /// Result of reading all transcript information in a single file read.
@@ -77,7 +77,17 @@ fn extract_waiting_prompt(entries: &[super::parser::TranscriptEntry]) -> Option<
             _ => None, // Parse failed or empty → caller falls back to pane jump
         }
     } else if names.iter().any(|n| n == "ExitPlanMode") {
-        Some(WaitingPrompt::PlanApproval)
+        let plan_text = tool_entry
+            .message
+            .as_ref()
+            .and_then(|m| {
+                m.content
+                    .iter()
+                    .find(|c| c.type_ == "tool_use" && c.name.as_deref() == Some("ExitPlanMode"))
+            })
+            .and_then(|c| c.parse_plan_text())
+            .unwrap_or_default();
+        Some(WaitingPrompt::PlanApproval { plan: plan_text })
     } else {
         Some(WaitingPrompt::ToolPermission { tool_names: names })
     }
