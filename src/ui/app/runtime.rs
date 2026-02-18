@@ -574,6 +574,40 @@ impl App {
                         // Reset pending if different key comes after g
                     }
 
+                    if self.detail_mode == DetailMode::Summary {
+                        if key.code == KeyCode::Char('j')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            self.summary_scroll_offset =
+                                self.summary_scroll_offset.saturating_add(1);
+                            self.dirty = true;
+                            continue;
+                        } else if key.code == KeyCode::Char('k')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            self.summary_scroll_offset =
+                                self.summary_scroll_offset.saturating_sub(1);
+                            self.dirty = true;
+                            continue;
+                        } else if key.code == KeyCode::Char('d')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            let half = self.viewport_half_height();
+                            self.summary_scroll_offset =
+                                self.summary_scroll_offset.saturating_add(half);
+                            self.dirty = true;
+                            continue;
+                        } else if key.code == KeyCode::Char('u')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            let half = self.viewport_half_height();
+                            self.summary_scroll_offset =
+                                self.summary_scroll_offset.saturating_sub(half);
+                            self.dirty = true;
+                            continue;
+                        }
+                    }
+
                     if is_quit_key(&key) {
                         break Ok(());
                     } else if is_down_key(&key) {
@@ -639,6 +673,7 @@ impl App {
                                 let index = (digit - 1) as usize;
                                 if index < self.sessions.len() {
                                     self.list_state.select(Some(index));
+                                    self.summary_scroll_offset = 0;
                                     self.exit_live_pane_view();
                                     self.dirty = true;
                                     // Also jump to the session
@@ -687,11 +722,13 @@ impl App {
                                     if is_double_click {
                                         // Double click -> jump
                                         self.list_state.select(Some(idx));
+                                        self.summary_scroll_offset = 0;
                                         let _ = self.jump_to_selected();
                                         self.last_click = None;
                                     } else {
                                         // Single click -> select
                                         self.list_state.select(Some(idx));
+                                        self.summary_scroll_offset = 0;
                                         self.dirty = true;
                                         self.last_click = Some((now, idx));
                                     }
@@ -826,6 +863,7 @@ impl App {
             history_timestamps: &self.history_timestamps,
             cached_history_lines: &mut self.cached_history_lines,
             cached_preview_lines: &mut self.cached_preview_lines,
+            summary_scroll_offset: &mut self.summary_scroll_offset,
             live_pane_bytes: self.live_pane_bytes.as_deref(),
             live_pane_bytes_hash: self.live_pane_bytes_hash,
             live_pane_scroll_offset: &mut self.live_pane_scroll_offset,

@@ -355,29 +355,22 @@ pub(super) fn render_summary_details(
                         Style::default().add_modifier(Modifier::BOLD),
                     )]));
 
-                    let preview_lines = available_for_preview.saturating_sub(4);
                     let text_hash = hash_str(plan);
-                    let cache_key = (text_hash, inner_width, preview_lines);
-                    let output_lines = if let Some((cached_key, cached)) =
-                        ctx.cached_preview_lines.as_ref()
-                    {
-                        if *cached_key == cache_key {
-                            cached.clone()
+                    let cache_key = (text_hash, inner_width);
+                    let output_lines =
+                        if let Some((cached_key, cached)) = ctx.cached_preview_lines.as_ref() {
+                            if *cached_key == cache_key {
+                                cached.clone()
+                            } else {
+                                let rendered = markdown::markdown_to_lines(plan, inner_width);
+                                *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
+                                rendered
+                            }
                         } else {
-                            let rendered = markdown::markdown_to_lines_truncated(
-                                plan,
-                                inner_width,
-                                preview_lines,
-                            );
+                            let rendered = markdown::markdown_to_lines(plan, inner_width);
                             *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
                             rendered
-                        }
-                    } else {
-                        let rendered =
-                            markdown::markdown_to_lines_truncated(plan, inner_width, preview_lines);
-                        *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
-                        rendered
-                    };
+                        };
                     lines.extend(output_lines);
                 } else {
                     if let Some(prompt) = &session.last_prompt {
@@ -385,19 +378,13 @@ pub(super) fn render_summary_details(
                             "💬 Last prompt:",
                             Style::default().add_modifier(Modifier::BOLD),
                         )]));
-                        let prompt_chars: Vec<char> = prompt.chars().collect();
-                        let max_prompt_len = inner_width * 2;
-                        let truncated: String = if prompt_chars.len() > max_prompt_len {
-                            prompt_chars[..max_prompt_len].iter().collect::<String>() + "..."
-                        } else {
-                            prompt_chars.iter().collect()
-                        };
-                        for line in truncated.lines().take(2) {
-                            lines.push(Line::from(Span::styled(
-                                line.to_string(),
-                                Style::default().fg(Color::Cyan),
-                            )));
-                        }
+                        let prompt_lines = crate::ui::session::wrap_text_lines(
+                            prompt,
+                            inner_width,
+                            usize::MAX,
+                            Color::Cyan,
+                        );
+                        lines.extend(prompt_lines);
                     }
 
                     if let Some(output) = &session.last_output {
@@ -414,28 +401,19 @@ pub(super) fn render_summary_details(
                             Style::default().add_modifier(Modifier::BOLD),
                         )]));
 
-                        let preview_lines = available_for_preview.saturating_sub(8);
                         let text_hash = hash_str(output);
-                        let cache_key = (text_hash, inner_width, preview_lines);
+                        let cache_key = (text_hash, inner_width);
                         let output_lines =
                             if let Some((cached_key, cached)) = ctx.cached_preview_lines.as_ref() {
                                 if *cached_key == cache_key {
                                     cached.clone()
                                 } else {
-                                    let rendered = markdown::markdown_to_lines_truncated(
-                                        output,
-                                        inner_width,
-                                        preview_lines,
-                                    );
+                                    let rendered = markdown::markdown_to_lines(output, inner_width);
                                     *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
                                     rendered
                                 }
                             } else {
-                                let rendered = markdown::markdown_to_lines_truncated(
-                                    output,
-                                    inner_width,
-                                    preview_lines,
-                                );
+                                let rendered = markdown::markdown_to_lines(output, inner_width);
                                 *ctx.cached_preview_lines = Some((cache_key, rendered.clone()));
                                 rendered
                             };
@@ -533,9 +511,16 @@ pub(super) fn render_summary_details(
             .constraints([Constraint::Min(0), Constraint::Length(input_height)])
             .split(area);
 
+        let content_height = text.len();
+        let viewport_height = chunks[0].height.saturating_sub(2) as usize;
+        let max_scroll = content_height.saturating_sub(viewport_height);
+        *ctx.summary_scroll_offset = (*ctx.summary_scroll_offset).min(max_scroll);
+        let clamped_offset = (*ctx.summary_scroll_offset).min(u16::MAX as usize) as u16;
+
         let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL).title(" Details "))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((clamped_offset, 0));
         f.render_widget(paragraph, chunks[0]);
 
         let pane_id = ctx
@@ -565,9 +550,16 @@ pub(super) fn render_summary_details(
         let cursor_y = chunks[1].y + 1 + cursor_visual_row - scroll_offset;
         f.set_cursor_position(Position::new(cursor_x, cursor_y));
     } else {
+        let content_height = text.len();
+        let viewport_height = area.height.saturating_sub(2) as usize;
+        let max_scroll = content_height.saturating_sub(viewport_height);
+        *ctx.summary_scroll_offset = (*ctx.summary_scroll_offset).min(max_scroll);
+        let clamped_offset = (*ctx.summary_scroll_offset).min(u16::MAX as usize) as u16;
+
         let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL).title(" Details "))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((clamped_offset, 0));
 
         f.render_widget(paragraph, area);
     }

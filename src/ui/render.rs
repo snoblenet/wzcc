@@ -26,8 +26,8 @@ mod summary;
 
 /// Cache entry for history detail view: ((text_hash, width), rendered_lines).
 pub type HistoryLinesCache = Option<((u64, usize), Vec<Line<'static>>)>;
-/// Cache entry for details preview: ((text_hash, width, max_lines), rendered_lines).
-pub type PreviewLinesCache = Option<((u64, usize, usize), Vec<Line<'static>>)>;
+/// Cache entry for details preview: ((text_hash, width), rendered_lines).
+pub type PreviewLinesCache = Option<((u64, usize), Vec<Line<'static>>)>;
 /// Cache entry for live pane view: ((content_hash, width), rendered_lines).
 /// Uses `Arc` to avoid cloning all lines on every frame.
 pub type LivePaneLinesCache = Option<((u64, usize), Arc<Vec<Line<'static>>>)>;
@@ -60,6 +60,7 @@ pub struct DetailsRenderCtx<'a> {
     pub history_timestamps: &'a [Option<SystemTime>],
     pub cached_history_lines: &'a mut HistoryLinesCache,
     pub cached_preview_lines: &'a mut PreviewLinesCache,
+    pub summary_scroll_offset: &'a mut usize,
     pub live_pane_bytes: Option<&'a [u8]>,
     pub live_pane_bytes_hash: u64,
     pub live_pane_scroll_offset: &'a mut usize,

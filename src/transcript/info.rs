@@ -37,8 +37,8 @@ pub fn read_transcript_info(path: &Path) -> Result<TranscriptInfo> {
     let snapshot = TranscriptSnapshot::from_path(path)?;
     let entries = snapshot.last_entries(10);
     let status = detect_session_status_from_entries(&entries);
-    let last_prompt = extract_last_user_prompt(&snapshot, 200);
-    let last_output = extract_last_assistant_text(&snapshot, 1000);
+    let last_prompt = extract_last_user_prompt(&snapshot, usize::MAX);
+    let last_output = extract_last_assistant_text(&snapshot, usize::MAX);
 
     let waiting_prompt = if matches!(status, SessionStatus::WaitingForUser { .. }) {
         extract_waiting_prompt(&entries)
@@ -158,8 +158,8 @@ mod tests {
 
         let info = read_transcript_info(file.path()).unwrap();
         let individual_status = detect_session_status(file.path()).unwrap();
-        let individual_prompt = get_last_user_prompt(file.path(), 200).unwrap();
-        let individual_output = get_last_assistant_text(file.path(), 1000).unwrap();
+        let individual_prompt = get_last_user_prompt(file.path(), usize::MAX).unwrap();
+        let individual_output = get_last_assistant_text(file.path(), usize::MAX).unwrap();
 
         assert_eq!(info.status, individual_status);
         assert_eq!(info.last_prompt, individual_prompt);

@@ -18,6 +18,7 @@ impl App {
         };
 
         self.list_state.select(Some(i));
+        self.summary_scroll_offset = 0;
         self.exit_live_pane_view();
         self.dirty = true;
     }
@@ -40,6 +41,7 @@ impl App {
         };
 
         self.list_state.select(Some(i));
+        self.summary_scroll_offset = 0;
         self.exit_live_pane_view();
         self.dirty = true;
     }
@@ -48,6 +50,7 @@ impl App {
     pub fn select_first(&mut self) {
         if !self.sessions.is_empty() {
             self.list_state.select(Some(0));
+            self.summary_scroll_offset = 0;
             self.exit_live_pane_view();
             self.dirty = true;
         }
@@ -57,6 +60,7 @@ impl App {
     pub fn select_last(&mut self) {
         if !self.sessions.is_empty() {
             self.list_state.select(Some(self.sessions.len() - 1));
+            self.summary_scroll_offset = 0;
             self.exit_live_pane_view();
             self.dirty = true;
         }

@@ -434,6 +434,7 @@ impl App {
     /// Exit history mode entirely (back to normal)
     pub(super) fn exit_history_mode(&mut self) {
         self.detail_mode = DetailMode::Summary;
+        self.summary_scroll_offset = 0;
         self.history_turns.clear();
         self.history_list_state.select(None);
         self.history_index = 0;
@@ -501,6 +502,7 @@ impl App {
             return;
         }
         self.detail_mode = DetailMode::Summary;
+        self.summary_scroll_offset = 0;
         self.live_pane_bytes = None;
         self.live_pane_bytes_hash = 0;
         self.live_pane_scroll_offset = 0;

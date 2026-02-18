@@ -144,8 +144,10 @@ pub struct App {
     history_timestamps: Vec<Option<SystemTime>>,
     /// Cached rendered lines for history detail view: ((text_hash, width), lines)
     cached_history_lines: Option<((u64, usize), Vec<ratatui::text::Line<'static>>)>,
-    /// Cached rendered lines for details preview: ((text_hash, width, max_lines), lines)
-    cached_preview_lines: Option<((u64, usize, usize), Vec<ratatui::text::Line<'static>>)>,
+    /// Cached rendered lines for details preview: ((text_hash, width), lines)
+    cached_preview_lines: Option<((u64, usize), Vec<ratatui::text::Line<'static>>)>,
+    /// Scroll offset within summary detail view (line-level)
+    summary_scroll_offset: usize,
     /// Cached raw ANSI bytes from wezterm cli get-text --escapes
     live_pane_bytes: Option<Vec<u8>>,
     /// Pre-computed hash of `live_pane_bytes` (avoids rehashing during render)
@@ -258,6 +260,7 @@ impl App {
             history_timestamps: Vec::new(),
             cached_history_lines: None,
             cached_preview_lines: None,
+            summary_scroll_offset: 0,
             live_pane_bytes: None,
             live_pane_bytes_hash: 0,
             live_pane_scroll_offset: 0,

@@ -256,6 +256,8 @@ pub(super) fn render_footer(
             Span::raw("Focus "),
             Span::styled("[y]", Style::default().fg(Color::Cyan)),
             Span::raw("Yank "),
+            Span::styled("[^J/^K/^D/^U]", Style::default().fg(Color::Cyan)),
+            Span::raw("Scroll "),
             Span::styled("[i]", Style::default().fg(Color::Cyan)),
             Span::raw("Prompt "),
             Span::styled("[1-9]", Style::default().fg(Color::Cyan)),
