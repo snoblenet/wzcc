@@ -23,6 +23,8 @@ mod live;
 mod slash_complete;
 #[path = "render/summary.rs"]
 mod summary;
+#[path = "render/terminal.rs"]
+pub(super) mod terminal;
 
 /// Cache entry for history detail view: ((text_hash, width), rendered_lines).
 pub type HistoryLinesCache = Option<((u64, usize), Vec<Line<'static>>)>;
@@ -43,6 +45,15 @@ pub enum DetailMode {
     HistoryDetail,
     /// Live pane view: raw terminal output from `wezterm cli get-text`.
     LivePane,
+    /// Embedded terminal: PTY-backed interactive terminal.
+    Terminal,
+}
+
+/// Rendering context for the embedded terminal panel.
+pub struct TerminalRenderCtx<'a> {
+    pub screen: &'a vt100::Screen,
+    pub focused: bool,
+    pub title: &'a str,
 }
 
 /// Rendering context for the details panel.
@@ -90,7 +101,19 @@ pub fn render_list(
 }
 
 /// Render the details panel.
-pub fn render_details(f: &mut ratatui::Frame, area: Rect, ctx: &mut DetailsRenderCtx<'_>) {
+pub fn render_details(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    ctx: &mut DetailsRenderCtx<'_>,
+    terminal_ctx: Option<TerminalRenderCtx<'_>>,
+) {
+    if ctx.detail_mode == DetailMode::Terminal {
+        if let Some(tctx) = terminal_ctx {
+            terminal::render_terminal_pane(f, area, tctx.screen, tctx.focused, tctx.title);
+        }
+        return;
+    }
+
     if ctx.detail_mode == DetailMode::LivePane {
         let content_area = if let Some(session) = ctx.selected.and_then(|i| ctx.sessions.get(i)) {
             let chunks = Layout::default()

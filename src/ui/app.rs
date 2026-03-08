@@ -7,6 +7,7 @@ use crate::datasource::{
 use crate::detector::ClaudeCodeDetector;
 use crate::session_mapping::SessionMapping;
 use crate::transcript::{ConversationTurn, TranscriptWatcher};
+use crate::ui::terminal_session::TerminalSession;
 use anyhow::Result;
 use crossterm::{
     event::{
@@ -58,6 +59,15 @@ const LIVE_PANE_COOLDOWN_SECS: u64 = 5;
 
 /// Number of consecutive poll failures before auto-exiting live pane view.
 const LIVE_PANE_MAX_FAILURES: u32 = 3;
+
+/// Which pane has keyboard focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FocusPane {
+    /// Session list sidebar (normal navigation).
+    Sidebar,
+    /// Embedded terminal (all keys forwarded to PTY).
+    Terminal,
+}
 
 /// Direction for splitting/adding a new pane.
 pub(super) enum SplitDirection {
@@ -174,6 +184,10 @@ pub struct App {
     answer_select_pending: Option<AnswerSelectState>,
     /// ListState for answer selector navigation
     answer_select_state: ListState,
+    /// Embedded terminal session (independent from sidebar selection)
+    terminal_session: Option<TerminalSession>,
+    /// Which pane has keyboard focus
+    focus_pane: FocusPane,
 }
 
 /// An option in the answer selection popup.
@@ -274,6 +288,8 @@ impl App {
             pending_transcript_refresh: false,
             answer_select_pending: None,
             answer_select_state: ListState::default(),
+            terminal_session: None,
+            focus_pane: FocusPane::Sidebar,
         }
     }
 

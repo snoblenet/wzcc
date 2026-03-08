@@ -235,6 +235,17 @@ pub(super) fn render_footer(
             Span::styled("[Esc/q]", Style::default().fg(Color::Green)),
             Span::raw("Back"),
         ])
+    } else if detail_mode == DetailMode::Terminal {
+        Line::from(vec![
+            Span::styled("[Tab]", Style::default().fg(Color::Green)),
+            Span::raw("Focus "),
+            Span::styled("[Ctrl+\\]", Style::default().fg(Color::Green)),
+            Span::raw("Sidebar "),
+            Span::styled("[h/l]", Style::default().fg(Color::Green)),
+            Span::raw("Resize "),
+            Span::styled("[Esc/q]", Style::default().fg(Color::Green)),
+            Span::raw("Exit"),
+        ])
     } else if input_mode {
         Line::from(vec![
             Span::styled("[Enter]", Style::default().fg(Color::Cyan)),
@@ -268,6 +279,8 @@ pub(super) fn render_footer(
             Span::raw("History "),
             Span::styled("[v]", Style::default().fg(Color::Cyan)),
             Span::raw("Live "),
+            Span::styled("[t]", Style::default().fg(Color::Cyan)),
+            Span::raw("Term "),
             Span::styled("[r]", Style::default().fg(Color::Cyan)),
             Span::raw("Refresh "),
             Span::styled("[x]", Style::default().fg(Color::Cyan)),

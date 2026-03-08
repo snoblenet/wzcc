@@ -484,6 +484,57 @@ impl App {
                         }
                     }
                 }
+                Event::Key(key) if self.detail_mode == DetailMode::Terminal => {
+                    // Embedded terminal mode key handling
+                    if self.focus_pane == FocusPane::Terminal {
+                        // Terminal has focus: forward all keys except escape combo
+                        if key.code == KeyCode::Char('\\')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            // Ctrl+\ -> toggle focus back to sidebar
+                            self.toggle_terminal_focus();
+                        } else {
+                            self.send_key_to_pty(&key);
+                        }
+                    } else {
+                        // Sidebar has focus while terminal is running
+                        match key.code {
+                            KeyCode::Tab => {
+                                self.toggle_terminal_focus();
+                            }
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                self.exit_terminal_mode();
+                            }
+                            KeyCode::Char('h') => {
+                                if self.details_width_percent < 80 {
+                                    self.details_width_percent += 5;
+                                    self.dirty = true;
+                                    self.needs_full_redraw = true;
+                                }
+                            }
+                            KeyCode::Char('l') => {
+                                if self.details_width_percent > 20 {
+                                    self.details_width_percent -= 5;
+                                    self.dirty = true;
+                                    self.needs_full_redraw = true;
+                                }
+                            }
+                            _ if is_down_key(&key) => {
+                                self.select_next();
+                            }
+                            _ if is_up_key(&key) => {
+                                self.select_previous();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Event::Paste(text)
+                    if self.detail_mode == DetailMode::Terminal
+                        && self.focus_pane == FocusPane::Terminal =>
+                {
+                    self.send_paste_to_pty(&text);
+                }
                 Event::Key(key) if self.detail_mode == DetailMode::LivePane => {
                     // Live pane view key handling
                     match key.code {
@@ -649,6 +700,9 @@ impl App {
                     } else if key.code == KeyCode::Char('H') {
                         // Enter history browsing mode
                         self.enter_history_mode();
+                    } else if key.code == KeyCode::Char('t') {
+                        // Enter embedded terminal mode
+                        self.enter_terminal_mode();
                     } else if key.code == KeyCode::Char('v') {
                         // Enter live pane view
                         self.enter_live_pane_view();
@@ -744,6 +798,9 @@ impl App {
                     self.dirty = true;
                 }
                 Event::Tick => {
+                    // Poll embedded terminal PTY output
+                    self.poll_pty_output();
+
                     // Poll live pane content if active
                     self.poll_live_pane_content();
 
@@ -870,7 +927,22 @@ impl App {
             cached_live_pane_lines: &mut self.cached_live_pane_lines,
             live_pane_error: self.live_pane_poll_failures > 0,
         };
-        render_details(f, chunks[1], &mut ctx);
+        // Build terminal render context if in terminal mode
+        let terminal_ctx =
+            self.terminal_session
+                .as_ref()
+                .map(|ts| crate::ui::render::TerminalRenderCtx {
+                    screen: ts.vt100_parser.screen(),
+                    focused: self.focus_pane == FocusPane::Terminal,
+                    title: &ts.title,
+                });
+
+        render_details(f, chunks[1], &mut ctx, terminal_ctx);
+
+        // Check terminal resize after render (viewport rect is now known)
+        if self.detail_mode == DetailMode::Terminal {
+            self.check_terminal_resize(chunks[1]);
+        }
 
         // Render footer with keybindings help
         let has_waiting_session = self

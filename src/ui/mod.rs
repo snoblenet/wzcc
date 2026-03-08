@@ -5,6 +5,7 @@ pub mod markdown;
 pub mod render;
 pub mod session;
 pub mod slash_commands;
+pub mod terminal_session;
 pub mod toast;
 
 pub use app::App;

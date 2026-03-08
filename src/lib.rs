@@ -3,6 +3,7 @@ pub mod config;
 pub mod datasource;
 pub mod detector;
 pub mod models;
+pub mod pty;
 pub mod session_mapping;
 pub mod transcript;
 pub mod ui;

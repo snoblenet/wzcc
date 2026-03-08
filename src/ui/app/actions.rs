@@ -812,4 +812,239 @@ impl App {
         self.answer_select_state.select(None);
         self.dirty = true;
     }
+
+    // --- Embedded Terminal Actions ---
+
+    /// Enter embedded terminal mode: spawn claude in a PTY.
+    pub(super) fn enter_terminal_mode(&mut self) {
+        use crate::pty::PtyHandle;
+        use crate::ui::terminal_session::TerminalSession;
+        use std::path::PathBuf;
+
+        // Get selected session's CWD (or fallback to home dir)
+        let cwd = self
+            .list_state
+            .selected()
+            .and_then(|i| self.sessions.get(i))
+            .and_then(|s| s.pane.cwd_path())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")));
+
+        let title = cwd
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Terminal".to_string());
+
+        // Clear all transient UI state (state invariant)
+        self.input_mode = false;
+        self.input_buffer.clear();
+        self.kill_confirm = None;
+        self.add_pane_pending = None;
+        self.command_select_pending = None;
+        self.answer_select_pending = None;
+        self.slash_complete_active = false;
+        self.slash_filtered.clear();
+
+        // Default size (will be updated on first render via viewport resize detection)
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        // Approximate: use 60% width for terminal, subtract borders
+        let term_cols = (cols as f32 * 0.6).max(20.0) as u16 - 2;
+        let term_rows = rows.saturating_sub(4); // header + footer + borders
+
+        match PtyHandle::spawn("claude", &cwd, term_cols, term_rows) {
+            Ok(pty_handle) => {
+                let parser = vt100::Parser::new(term_rows, term_cols, 1000);
+                self.terminal_session = Some(TerminalSession {
+                    cwd,
+                    title,
+                    pty_handle,
+                    vt100_parser: parser,
+                    viewport_rect: None,
+                });
+                self.detail_mode = DetailMode::Terminal;
+                self.focus_pane = FocusPane::Terminal;
+                self.dirty = true;
+                self.needs_full_redraw = true;
+            }
+            Err(e) => {
+                self.toast = Some(Toast::error(format!("Failed to spawn terminal: {}", e)));
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// Exit embedded terminal mode: kill PTY and return to Summary.
+    pub(super) fn exit_terminal_mode(&mut self) {
+        self.terminal_session = None; // Drop sends shutdown signal
+        self.detail_mode = DetailMode::Summary;
+        self.focus_pane = FocusPane::Sidebar;
+        self.summary_scroll_offset = 0;
+        self.dirty = true;
+        self.needs_full_redraw = true;
+    }
+
+    /// Toggle focus between sidebar and embedded terminal.
+    pub(super) fn toggle_terminal_focus(&mut self) {
+        if self.terminal_session.is_some() {
+            self.focus_pane = match self.focus_pane {
+                FocusPane::Sidebar => FocusPane::Terminal,
+                FocusPane::Terminal => FocusPane::Sidebar,
+            };
+            self.dirty = true;
+        }
+    }
+
+    /// Convert a crossterm KeyEvent to terminal byte sequence and write to PTY.
+    pub(super) fn send_key_to_pty(&mut self, key: &crossterm::event::KeyEvent) {
+        let bytes = key_event_to_bytes(key);
+        if !bytes.is_empty() {
+            if let Some(ref mut ts) = self.terminal_session {
+                let _ = ts.pty_handle.write(&bytes);
+            }
+        }
+    }
+
+    /// Send pasted text to PTY wrapped in bracketed paste markers.
+    pub(super) fn send_paste_to_pty(&mut self, text: &str) {
+        if let Some(ref mut ts) = self.terminal_session {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(b"\x1b[200~"); // begin bracketed paste
+            buf.extend_from_slice(text.as_bytes());
+            buf.extend_from_slice(b"\x1b[201~"); // end bracketed paste
+            let _ = ts.pty_handle.write(&buf);
+        }
+    }
+
+    /// Poll PTY output and feed to vt100 parser. Returns true if any output received.
+    pub(super) fn poll_pty_output(&mut self) -> bool {
+        use crate::pty::PtyEvent;
+
+        let Some(ref mut ts) = self.terminal_session else {
+            return false;
+        };
+
+        let events = ts.pty_handle.try_recv();
+        if events.is_empty() {
+            return false;
+        }
+
+        let mut got_output = false;
+        let mut exited = false;
+
+        for event in events {
+            match event {
+                PtyEvent::Output(bytes) => {
+                    ts.vt100_parser.process(&bytes);
+                    got_output = true;
+                }
+                PtyEvent::Exited => {
+                    exited = true;
+                }
+            }
+        }
+
+        if exited {
+            self.toast = Some(Toast::success("Terminal process exited".into()));
+            self.exit_terminal_mode();
+            return true;
+        }
+
+        if got_output {
+            self.dirty = true;
+        }
+
+        got_output
+    }
+
+    /// Check and handle viewport resize for embedded terminal.
+    pub(super) fn check_terminal_resize(&mut self, current_area: Rect) {
+        let Some(ref mut ts) = self.terminal_session else {
+            return;
+        };
+
+        // Account for block borders (1 on each side)
+        let inner_cols = current_area.width.saturating_sub(2);
+        let inner_rows = current_area.height.saturating_sub(2);
+
+        if inner_cols == 0 || inner_rows == 0 {
+            return;
+        }
+
+        let needs_resize = ts
+            .viewport_rect
+            .map(|prev| {
+                prev.width.saturating_sub(2) != inner_cols
+                    || prev.height.saturating_sub(2) != inner_rows
+            })
+            .unwrap_or(true);
+
+        if needs_resize {
+            ts.viewport_rect = Some(current_area);
+            ts.vt100_parser.set_size(inner_rows, inner_cols);
+            let _ = ts.pty_handle.resize(inner_cols, inner_rows);
+        }
+    }
+}
+
+/// Convert a crossterm KeyEvent into terminal byte sequences.
+fn key_event_to_bytes(key: &crossterm::event::KeyEvent) -> Vec<u8> {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    match key.code {
+        KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+A = 0x01, Ctrl+Z = 0x1a, etc.
+            if c.is_ascii_alphabetic() {
+                vec![(c.to_ascii_lowercase() as u8) & 0x1f]
+            } else if c == '\\' {
+                // Ctrl+\ = 0x1c (SIGQUIT) -- but we intercept this as escape combo
+                vec![0x1c]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) => {
+            // Alt+key = ESC + key
+            let mut buf = vec![0x1b];
+            let mut utf8 = [0u8; 4];
+            let s = c.encode_utf8(&mut utf8);
+            buf.extend_from_slice(s.as_bytes());
+            buf
+        }
+        KeyCode::Char(c) => {
+            let mut buf = [0u8; 4];
+            let s = c.encode_utf8(&mut buf);
+            s.as_bytes().to_vec()
+        }
+        KeyCode::Enter => vec![b'\r'],
+        KeyCode::Backspace => vec![0x7f],
+        KeyCode::Tab => vec![b'\t'],
+        KeyCode::BackTab => vec![0x1b, b'[', b'Z'], // Shift+Tab
+        KeyCode::Esc => vec![0x1b],
+        KeyCode::Up => b"\x1b[A".to_vec(),
+        KeyCode::Down => b"\x1b[B".to_vec(),
+        KeyCode::Right => b"\x1b[C".to_vec(),
+        KeyCode::Left => b"\x1b[D".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Insert => b"\x1b[2~".to_vec(),
+        KeyCode::F(n) => match n {
+            1 => b"\x1bOP".to_vec(),
+            2 => b"\x1bOQ".to_vec(),
+            3 => b"\x1bOR".to_vec(),
+            4 => b"\x1bOS".to_vec(),
+            5 => b"\x1b[15~".to_vec(),
+            6 => b"\x1b[17~".to_vec(),
+            7 => b"\x1b[18~".to_vec(),
+            8 => b"\x1b[19~".to_vec(),
+            9 => b"\x1b[20~".to_vec(),
+            10 => b"\x1b[21~".to_vec(),
+            11 => b"\x1b[23~".to_vec(),
+            12 => b"\x1b[24~".to_vec(),
+            _ => vec![],
+        },
+        _ => vec![],
+    }
 }
