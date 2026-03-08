@@ -28,7 +28,7 @@ pub struct PtyHandle {
 
 impl PtyHandle {
     /// Spawn a command in a new PTY.
-    pub fn spawn(command: &str, cwd: &Path, cols: u16, rows: u16) -> Result<Self> {
+    pub fn spawn(command: &str, args: &[&str], cwd: &Path, cols: u16, rows: u16) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -41,6 +41,9 @@ impl PtyHandle {
             .context("Failed to open PTY")?;
 
         let mut cmd = CommandBuilder::new(command);
+        for arg in args {
+            cmd.arg(arg);
+        }
         cmd.cwd(cwd);
 
         let child = pair

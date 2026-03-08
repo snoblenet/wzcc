@@ -821,11 +821,13 @@ impl App {
         use crate::ui::terminal_session::TerminalSession;
         use std::path::PathBuf;
 
-        // Get selected session's CWD (or fallback to home dir)
-        let cwd = self
+        let selected_session = self
             .list_state
             .selected()
-            .and_then(|i| self.sessions.get(i))
+            .and_then(|i| self.sessions.get(i));
+
+        // Get selected session's CWD (or fallback to home dir)
+        let cwd = selected_session
             .and_then(|s| s.pane.cwd_path())
             .map(PathBuf::from)
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")));
@@ -834,6 +836,9 @@ impl App {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "Terminal".to_string());
+
+        // Get session_id for --resume (if available)
+        let session_id = selected_session.and_then(|s| s.session_id.clone());
 
         // Clear all transient UI state (state invariant)
         self.input_mode = false;
@@ -851,7 +856,14 @@ impl App {
         let term_cols = (cols as f32 * 0.6).max(20.0) as u16 - 2;
         let term_rows = rows.saturating_sub(4); // header + footer + borders
 
-        match PtyHandle::spawn("claude", &cwd, term_cols, term_rows) {
+        // Build args: use --resume <session-id> if available, otherwise new session
+        let args: Vec<&str> = if let Some(ref id) = session_id {
+            vec!["--resume", id]
+        } else {
+            vec![]
+        };
+
+        match PtyHandle::spawn("claude", &args, &cwd, term_cols, term_rows) {
             Ok(pty_handle) => {
                 let parser = vt100::Parser::new(term_rows, term_cols, 1000);
                 self.terminal_session = Some(TerminalSession {
