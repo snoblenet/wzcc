@@ -239,7 +239,7 @@ pub(super) fn render_footer(
         Line::from(vec![
             Span::styled("[Tab]", Style::default().fg(Color::Green)),
             Span::raw("Focus "),
-            Span::styled("[Ctrl+\\]", Style::default().fg(Color::Green)),
+            Span::styled("[^G]", Style::default().fg(Color::Green)),
             Span::raw("Sidebar "),
             Span::styled("[h/l]", Style::default().fg(Color::Green)),
             Span::raw("Resize "),

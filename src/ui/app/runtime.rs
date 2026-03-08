@@ -488,10 +488,13 @@ impl App {
                     // Embedded terminal mode key handling
                     if self.focus_pane == FocusPane::Terminal {
                         // Terminal has focus: forward all keys except escape combo
-                        if key.code == KeyCode::Char('\\')
+                        // NOTE: Ctrl+\ (0x1c) is NOT reliably decoded by crossterm in
+                        // legacy mode (only 0x01-0x1a = Ctrl+A..Z are mapped).
+                        // Use Ctrl+G (0x07, BEL) instead — unused by Claude Code.
+                        if key.code == KeyCode::Char('g')
                             && key.modifiers.contains(KeyModifiers::CONTROL)
                         {
-                            // Ctrl+\ -> toggle focus back to sidebar
+                            // Ctrl+G -> toggle focus back to sidebar
                             self.toggle_terminal_focus();
                         } else {
                             self.send_key_to_pty(&key);

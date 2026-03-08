@@ -995,9 +995,6 @@ fn key_event_to_bytes(key: &crossterm::event::KeyEvent) -> Vec<u8> {
             // Ctrl+A = 0x01, Ctrl+Z = 0x1a, etc.
             if c.is_ascii_alphabetic() {
                 vec![(c.to_ascii_lowercase() as u8) & 0x1f]
-            } else if c == '\\' {
-                // Ctrl+\ = 0x1c (SIGQUIT) -- but we intercept this as escape combo
-                vec![0x1c]
             } else {
                 vec![]
             }
