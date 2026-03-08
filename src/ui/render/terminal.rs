@@ -64,13 +64,14 @@ pub fn render_terminal_pane(
     let buf = f.buffer_mut();
     render_screen_to_buffer(screen, inner, buf);
 
-    // Draw cursor if focused
-    if focused {
+    // Draw cursor as a reversed cell (no blinking host cursor)
+    if focused && !screen.hide_cursor() {
         let (cursor_row, cursor_col) = (screen.cursor_position().0, screen.cursor_position().1);
         let cursor_x = inner.x + cursor_col;
         let cursor_y = inner.y + cursor_row;
         if cursor_x < inner.right() && cursor_y < inner.bottom() {
-            f.set_cursor_position((cursor_x, cursor_y));
+            let cell = &mut buf[(cursor_x, cursor_y)];
+            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
         }
     }
 }
