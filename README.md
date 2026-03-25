@@ -372,13 +372,13 @@ PANE_ID="${WEZTERM_PANE}"
 [[ -z "$PANE_ID" ]] && exit 0
 
 STATUS_FILE="/tmp/claude-status-msg-${PANE_ID}"
-EVENT="${1}"  # "stop" or "prompt"
+EVENT="${1}"  # "stop", "prompt", or "pretool"
 
 if [[ "$EVENT" == "stop" ]]; then
-  # Claude has stopped — session is now waiting for user input
+  # Claude has stopped — session is now waiting for user input or approval
   printf '%s\nwaiting\n' "$(date +%s%3N)" > "$STATUS_FILE"
-elif [[ "$EVENT" == "prompt" ]]; then
-  # User submitted a prompt — session is now active
+elif [[ "$EVENT" == "prompt" || "$EVENT" == "pretool" ]]; then
+  # A new turn is starting or a tool is about to execute — session is active
   EXISTING_MSG=""
   [[ -f "$STATUS_FILE" ]] && EXISTING_MSG=$(sed -n '3p' "$STATUS_FILE")
   printf '%s\nactive\n%s\n' "$(date +%s%3N)" "$EXISTING_MSG" > "$STATUS_FILE"
@@ -413,10 +413,29 @@ Add the following to `~/.claude/settings.json`:
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/claude-status.sh pretool"
+          }
+        ]
+      }
     ]
   }
 }
 ```
+
+The three hooks cover different cases:
+
+| Hook | Event | Why |
+|------|-------|-----|
+| `Stop` | Claude yields back to the user | Marks the session `waiting` |
+| `UserPromptSubmit` | User submits a prompt | Marks the session `active` at the start of each turn |
+| `PreToolUse` | A tool is about to execute | Refreshes `active` immediately before each tool run, ensuring the file is current even if the pane was reused after a previous session ended abnormally |
 
 After saving `settings.json`, restart your Claude Code sessions for the hooks to take effect.
 
