@@ -28,11 +28,22 @@ SESSION_ID=$(echo "$input" | jq -r '.session_id // empty')
 TRANSCRIPT_PATH=$(echo "$input" | jq -r '.transcript_path // empty')
 CWD=$(echo "$input" | jq -r '.cwd // empty')
 
+# Read hook-reported status so wzcc can override transcript-based WaitingForUser
+# detection. When a tool is auto-approved and running for >10s the transcript
+# heuristic incorrectly shows "Waiting"; the hook writes "active" in that case.
+HOOK_STATUS=""
+if [[ -n "$WEZTERM_PANE" ]]; then
+    STATUS_FILE="/tmp/claude-status-msg-$WEZTERM_PANE"
+    if [[ -f "$STATUS_FILE" ]]; then
+        HOOK_STATUS=$(sed -n '2p' "$STATUS_FILE")
+    fi
+fi
+
 # Only write if we have valid session info and TTY
 if [[ -n "$SESSION_ID" && -n "$TTY" ]]; then
     mkdir -p ~/.claude/wzcc/sessions
     cat > ~/.claude/wzcc/sessions/${TTY}.json << EOF
-{"session_id":"$SESSION_ID","transcript_path":"$TRANSCRIPT_PATH","cwd":"$CWD","tty":"$TTY","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"session_id":"$SESSION_ID","transcript_path":"$TRANSCRIPT_PATH","cwd":"$CWD","tty":"$TTY","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","status":"$HOOK_STATUS"}
 EOF
 fi
 
