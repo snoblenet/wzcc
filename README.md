@@ -263,7 +263,7 @@ wzcc reads Claude Code transcript files located in `~/.claude/projects/{encoded-
 |--------|-----------|
 | `Processing` | Last entry is progress event, tool_result from user, user input (Claude responding), or recent tool_use invocation (<10 seconds). Also shown when a hook reports `active` and overrides a stale `Waiting` signal. |
 | `Idle` | Last entry is assistant response, end_turn marker, turn_duration, or stop_hook_summary |
-| `Waiting` | Tool use pending user approval (>10 seconds elapsed since last transcript entry). Can produce false positives for auto-approved tools — see [Accurate status for long-running auto-approved tools](#accurate-status-for-long-running-auto-approved-tools). |
+| `Waiting` | Tool use pending user approval (>10 seconds elapsed since last transcript entry). Optional hooks can improve accuracy for long-running auto-approved tools — see [Accurate status for long-running auto-approved tools](#accurate-status-for-long-running-auto-approved-tools). |
 | `Ready` | Fresh session with no meaningful entries yet |
 | `Unknown` | Transcript parsing failed, status cannot be determined, or statusLine bridge is stale |
 
@@ -341,13 +341,11 @@ wzcc uninstall-bridge
 
 ### Accurate Status for Long-Running Auto-Approved Tools
 
-When a tool is auto-approved and runs for more than 10 seconds, wzcc can incorrectly show the session as **Waiting** instead of **Processing**. This happens because the transcript heuristic cannot distinguish "waiting for the user to approve a tool" from "an approved tool is executing" — both look like a `tool_use` entry with no follow-up.
+By default wzcc determines session status from the transcript. For most workflows this is accurate, but auto-approved tools that run for more than 10 seconds are indistinguishable from tools awaiting approval — no new transcript entries appear until the tool completes.
 
-**Solution: install Claude Code hooks that report session status**
+For more accurate status in these cases, wzcc's statusLine bridge supports an optional hook status signal. When Claude Code hooks write an `active` status to `/tmp/claude-status-msg-{WEZTERM_PANE}`, the bridge reads it and wzcc shows `Processing` instead of `Waiting` for those sessions.
 
-wzcc's statusLine bridge includes a hook status slot. When Claude Code hooks write an `active` signal to `/tmp/claude-status-msg-{WEZTERM_PANE}`, the bridge reads it and wzcc overrides the transcript-based `Waiting` with `Processing`.
-
-This is **opt-in and backward compatible** — without the hooks the transcript heuristic applies unchanged.
+Without the hooks, behaviour is identical to previous versions — the transcript heuristic applies and nothing changes.
 
 #### Status file format
 
