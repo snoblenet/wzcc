@@ -115,9 +115,26 @@ pub fn install_bridge() -> Result<()> {
         .and_then(|c| c.as_str())
         .map(|s| s.to_string());
 
-    // Don't chain to ourselves if we're already installed
+    // Don't chain to ourselves if we're already installed.
+    // When reinstalling, extract the ORIGINAL_STATUSLINE from the existing bridge
+    // file so the chain to the user's statusLine command is preserved.
     let original_command = match &existing_command {
-        Some(cmd) if cmd.contains("wzcc_statusline_bridge") => None,
+        Some(cmd) if cmd.contains("wzcc_statusline_bridge") => {
+            // Extract the existing chain from the installed bridge script
+            bridge_path.exists().then(|| {
+                fs::read_to_string(&bridge_path).ok().and_then(|content| {
+                    content.lines().find_map(|line| {
+                        let value = line.strip_prefix("ORIGINAL_STATUSLINE=")?;
+                        let value = value.trim_matches('"');
+                        if value.is_empty() || value.contains("{{ORIGINAL_STATUSLINE}}") {
+                            None
+                        } else {
+                            Some(value.to_string())
+                        }
+                    })
+                })
+            }).flatten()
+        }
         other => other.clone(),
     };
 
