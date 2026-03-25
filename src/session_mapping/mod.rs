@@ -23,6 +23,11 @@ pub struct SessionMapping {
     pub tty: String,
     /// Last update timestamp
     pub updated_at: DateTime<Utc>,
+    /// Optional status override from external hooks (e.g., "active" or "waiting").
+    /// When present and set to "active", takes precedence over transcript-based
+    /// WaitingForUser detection to prevent false positives from long-running tools.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// Result of reading a session mapping
@@ -309,6 +314,7 @@ mod tests {
             cwd: "/tmp/test".to_string(),
             tty: tty.to_string(),
             updated_at: Utc::now() - chrono::Duration::minutes(10),
+            status: None,
         };
         fs::write(&path, serde_json::to_string(&mapping).unwrap()).unwrap();
 
@@ -334,6 +340,7 @@ mod tests {
             cwd: "/Users/test/project".to_string(),
             tty: "ttys003".to_string(),
             updated_at: Utc::now(),
+            status: None,
         };
 
         let json = serde_json::to_string(&mapping).unwrap();

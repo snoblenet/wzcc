@@ -52,12 +52,28 @@ pub fn detect_session_info(pane: &Pane) -> SessionInfo {
                                 waiting_prompt: None,
                             });
                         let mtime = get_file_mtime(&transcript_path);
+                        // If the bridge reports "active" but the transcript heuristic says
+                        // WaitingForUser, the tool was auto-approved and is still executing.
+                        // Downgrade to Processing to avoid false "Waiting" indicators.
+                        let effective_status =
+                            match (&info.status, mapping.status.as_deref()) {
+                                (SessionStatus::WaitingForUser { .. }, Some("active")) => {
+                                    SessionStatus::Processing
+                                }
+                                _ => info.status,
+                            };
+                        let effective_waiting_prompt =
+                            if matches!(effective_status, SessionStatus::Processing) {
+                                None
+                            } else {
+                                info.waiting_prompt
+                            };
                         (
-                            info.status,
+                            effective_status,
                             info.last_prompt,
                             info.last_output,
                             mtime,
-                            info.waiting_prompt,
+                            effective_waiting_prompt,
                         )
                     } else {
                         (SessionStatus::Ready, None, None, None, None)
